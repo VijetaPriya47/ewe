@@ -56,7 +56,7 @@ fun HomeScreen(repo: Repository, store: EpisodeStore, onOpen: (String) -> Unit, 
                 "Inactive" -> !it.isActive
                 else -> true
             }
-        }.sortedByDescending { it.updatedAt }
+        }.sortedByDescending { app.ewe.data.instantOf(it.updatedAt) }
     }
 
     Column(Modifier.fillMaxSize().background(C.White)) {

@@ -166,3 +166,7 @@ enum class ProviderKind(val id: String, val label: String, val hint: String) {
 
 /** What is sent along with a request; the key never goes anywhere else. */
 data class ProviderCfg(val kind: ProviderKind, val apiKey: String, val model: String, val baseUrl: String?)
+
+/** Postgres timestamps vary in how many fractional digits they print, so compare them as instants. */
+fun instantOf(iso: String): java.time.Instant =
+    runCatching { java.time.OffsetDateTime.parse(iso).toInstant() }.getOrElse { runCatching { java.time.Instant.parse(iso) }.getOrDefault(java.time.Instant.EPOCH) }

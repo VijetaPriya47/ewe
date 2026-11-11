@@ -13,10 +13,10 @@ object Search {
         if (words.isEmpty()) return Results(emptyList(), emptyList())
         fun String.hit() = lowercase().let { t -> words.all { it in t } }
 
-        val sessions = s.sessions.filter { it.title.hit() }.sortedWith(compareByDescending<Session> { it.isActive }.thenByDescending { it.updatedAt })
+        val sessions = s.sessions.filter { it.title.hit() }.sortedWith(compareByDescending<Session> { it.isActive }.thenByDescending { instantOf(it.updatedAt) })
         // Best first: the note itself matches, then its section title, then only its session.
         val ranked = ArrayList<Pair<Int, NoteHit>>()
-        for (session in s.sessions.sortedWith(compareByDescending<Session> { it.isActive }.thenByDescending { it.updatedAt })) {
+        for (session in s.sessions.sortedWith(compareByDescending<Session> { it.isActive }.thenByDescending { instantOf(it.updatedAt) })) {
             for (section in s.sectionsOf(session.id)) {
                 for (p in s.points(section.id)) {
                     val from = p.link?.let { s.session(s.section(p.bullet.sectionId)?.sessionId) }

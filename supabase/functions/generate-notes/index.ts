@@ -12,7 +12,7 @@
 // The key is used for this one call and never stored. Photos go to the AI and are then
 // dropped — only the resulting notes are saved.
 
-import { HttpError, must, serve, userClient } from "../_shared/http.ts";
+import { HttpError, must, requireUser, serve, userClient } from "../_shared/http.ts";
 import { checkCfg, generateJson, type ImageInput } from "../_shared/providers.ts";
 import {
   buildNotesRequest, type ExistingSection, renderPreviousNotes, type SessionType, summarize, toApplyPayload,
@@ -29,6 +29,7 @@ serve(async (req, body) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) throw new HttpError("local_date is required (YYYY-MM-DD)");
   const provider = checkCfg(body.provider, "notes");
   const db = userClient(req);
+  await requireUser(req, db);
 
   // 1. The session
   const { data: session } = await db.from("sessions").select("id, title, type, is_active").eq("id", sessionId).maybeSingle();
@@ -38,7 +39,7 @@ serve(async (req, body) => {
 
   // 2. Previous notes of THIS session (context — old photos are never re-sent)
   const rows = must(await db.from("sections")
-    .select("id, title, position, bullets(id, content, position)").eq("session_id", sessionId).order("position")) as
+    .select("id, title, position, bullets!bullets_section_id_fkey(id, content, position)").eq("session_id", sessionId).order("position")) as
     { id: string; title: string; bullets: { id: string; content: string; position: number }[] }[];
   const sections: ExistingSection[] = rows.map((s) => ({
     id: s.id, title: s.title,

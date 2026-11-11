@@ -1,6 +1,8 @@
-# The functions check the caller themselves: every query runs as the signed-in user.
+# The functions check the caller themselves (requireUser) and every query runs as the
+# signed-in user under row-level security, so the gateway check is off. This also keeps
+# them working with Supabase's newer JWT signing keys.
 [functions.generate-notes]
-verify_jwt = true
+verify_jwt = false
 
 [functions.linking]
-verify_jwt = true
+verify_jwt = false

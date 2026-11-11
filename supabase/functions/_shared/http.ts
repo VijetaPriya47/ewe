@@ -23,6 +23,14 @@ export function userClient(req: Request): SupabaseClient {
   });
 }
 
+/** The gateway does not check the token (verify_jwt = false), so the function does. */
+export async function requireUser(req: Request, db: SupabaseClient): Promise<string> {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data, error } = await db.auth.getUser(token);
+  if (error || !data?.user) throw new HttpError("Please sign in again.", 401);
+  return data.user.id;
+}
+
 export function serve(handler: (req: Request, body: Record<string, unknown>) => Promise<unknown>) {
   Deno.serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });

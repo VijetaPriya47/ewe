@@ -124,7 +124,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                     settings = st,
                     sessions = decode(sessions.await()), sections = decode(sections.await()),
                     bullets = decode(bullets.await()), links = decode(links.await()),
-                    messages = decode<Message>(messages.await()).sortedBy { it.createdAt },
+                    messages = decode<Message>(messages.await()).sortedBy { instantOf(it.createdAt) },
                     schedule = decode(schedule.await()), rag = rag, syncedAt = System.currentTimeMillis(),
                 )
             }
@@ -144,10 +144,10 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         AppJson.decodeFromJsonElement(ListSerializer(kotlinx.serialization.serializer<T>()), rows)
 
     private suspend fun loadSettings(): Settings {
-        var rows = api.selectAll("settings", "*")
+        var rows = api.selectAll("settings", SETTINGS_COLUMNS, order = "user_id")
         if (rows.isEmpty()) {
             api.upsert("settings", buildJsonObject { put("user_id", prefs.userId) })
-            rows = api.selectAll("settings", "*")
+            rows = api.selectAll("settings", SETTINGS_COLUMNS, order = "user_id")
         }
         return rows.firstOrNull()?.let { AppJson.decodeFromJsonElement<Settings>(it) } ?: Settings()
     }
@@ -369,6 +369,10 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     fun pendingListenedIds(): Set<String> = prefs.pendingListened.map { it.substringBefore('|') }.toSet()
 
     companion object {
+        private const val SETTINGS_COLUMNS = "notes_provider,notes_model,placement_provider,placement_model,podcast_provider,podcast_model," +
+            "rag_enabled,rag_selected_model,rag_active_model,podcast_enabled,interval_cap_days,daily_job_time," +
+            "podcast_target_minutes,revisions_per_level,keep_photo_copies"
+
         /** "provider:model" → (provider, model) */
         fun splitModel(key: String?): Pair<String, String>? {
             if (key.isNullOrBlank() || !key.contains(':')) return null

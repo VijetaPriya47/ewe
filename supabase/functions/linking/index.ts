@@ -8,7 +8,7 @@
 // Keys are sent with each request and never stored.
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.119.0";
-import { HttpError, must, serve, userClient } from "../_shared/http.ts";
+import { HttpError, must, requireUser, serve, userClient } from "../_shared/http.ts";
 import { checkCfg, embed, generateJson, modelKey, type ProviderCfg } from "../_shared/providers.ts";
 import { buildPlacementRequest, resolvePlacement, type SectionCandidate, type TopicCandidate } from "../_shared/placement.ts";
 
@@ -36,6 +36,7 @@ async function embedPending(db: SupabaseClient, cfg: ProviderCfg, staging: boole
 
 serve(async (req, body) => {
   const db = userClient(req);
+  await requireUser(req, db);
   const cfg = checkCfg(body.embedding, "embeddings");
   const key = modelKey(cfg);
   const deadline = Date.now() + TIME_BUDGET_MS;
@@ -69,7 +70,7 @@ serve(async (req, body) => {
       const { data: session } = await db.from("sessions").select("id, title").eq("id", sessionId).maybeSingle();
       if (!session) throw new HttpError("Session not found", 404);
       const bullets = must(await db.from("bullets")
-        .select("id, content, position, section_id, sections!inner(id, title, session_id)")
+        .select("id, content, position, section_id, sections!bullets_section_id_fkey!inner(id, title, session_id)")
         .eq("origin_message_id", messageId).eq("sections.session_id", sessionId).order("position")) as unknown as
         { id: string; content: string; section_id: string; sections: { title: string } }[];
       if (bullets.length === 0) return { linked: [] };

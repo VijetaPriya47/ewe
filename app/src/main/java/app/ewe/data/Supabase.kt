@@ -77,11 +77,11 @@ class Supabase(private val prefs: LocalPrefs, private val http: OkHttpClient = d
 
     // ───────────── tables ─────────────
     /** Reads every row (PostgREST returns at most 1000 per request, so this pages). */
-    suspend fun selectAll(table: String, columns: String, filter: String = ""): JsonArray {
+    suspend fun selectAll(table: String, columns: String, filter: String = "", order: String = "id"): JsonArray {
         val out = ArrayList<JsonElement>()
         var offset = 0
         while (true) {
-            val page = raw("GET", "/rest/v1/$table?select=$columns${if (filter.isEmpty()) "" else "&$filter"}&order=id&limit=$PAGE&offset=$offset", null)
+            val page = raw("GET", "/rest/v1/$table?select=$columns${if (filter.isEmpty()) "" else "&$filter"}&order=$order&limit=$PAGE&offset=$offset", null)
             val rows = page as? JsonArray ?: break
             out.addAll(rows)
             if (rows.size < PAGE) break
@@ -124,7 +124,7 @@ class Supabase(private val prefs: LocalPrefs, private val http: OkHttpClient = d
         val token = if (auth) freshToken() else null
         val req = Request.Builder().url(base + path)
             .header("apikey", prefs.anonKey)
-            .header("Authorization", "Bearer ${token ?: prefs.anonKey}")
+            .apply { if (token != null) header("Authorization", "Bearer $token") }
             .apply { if (prefer != null) header("Prefer", prefer) }
             .method(method, body?.let { AppJson.encodeToString(JsonElement.serializer(), it).toRequestBody(jsonType) }
                 ?: if (method == "GET" || method == "DELETE") null else "{}".toRequestBody(jsonType))
