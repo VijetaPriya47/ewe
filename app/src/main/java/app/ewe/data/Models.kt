@@ -41,7 +41,11 @@ data class Bullet(
     @SerialName("date_added") val dateAdded: String = "",
     @SerialName("origin_session_id") val originSessionId: String = "",
     @SerialName("origin_message_id") val originMessageId: String? = null,
-)
+    /** "text", or "mermaid" for a diagram whose content is the Mermaid code. */
+    val kind: String = "text",
+) {
+    val isDiagram: Boolean get() = kind == "mermaid"
+}
 
 /** The same bullet row, also shown inside a Topic section. */
 @Serializable

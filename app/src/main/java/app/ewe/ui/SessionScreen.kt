@@ -50,6 +50,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import app.ewe.podcast.ReaderState
+import app.ewe.podcast.NotesReader
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +88,15 @@ fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, on
         return
     }
 
+    val context = LocalContext.current
+    val toast = LocalToast.current
+    val reader = remember { NotesReader.get(context) }
+    val reading by reader.state.collectAsState()
+    val readerError by reader.error.collectAsState()
+    LaunchedEffect(readerError) { readerError?.let { toast(it); reader.clearError() } }
+    // Reading stops when you leave this session (it keeps going if the phone is locked or you switch apps).
+    DisposableEffect(sessionId) { onDispose { if (reader.state.value?.sessionId == sessionId) reader.stop() } }
+
     Column(Modifier.fillMaxSize().background(C.White).imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconBtn(Ic.Back, "Back to sessions", onClick = onBack)
@@ -100,8 +114,9 @@ fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, on
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(C.G200))
 
-        if (notesTab) NotesTab(repo, snap, session, onOpenSession)
+        if (notesTab) NotesTab(repo, snap, session, onOpenSession, reader, reading?.takeIf { it.sessionId == session.id })
         else ChatTab(repo, snap, session, onOpenNotes = { notesTab = true }, onSettings = onSettings)
+        reading?.takeIf { it.sessionId == session.id }?.let { ReaderBar(reader, it) }
     }
 
     if (showOptions) SessionOptions(repo, snap, session, onDismiss = { showOptions = false }, onOpenSession = onOpenSession)
@@ -311,7 +326,8 @@ private fun AssistantMessage(text: String, onOpenNotes: (() -> Unit)?) {
 // ═══════════════════════════ Notes tab ═══════════════════════════
 
 @Composable
-private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Session, onOpenSession: (String) -> Unit) {
+private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Session, onOpenSession: (String) -> Unit,
+                                 reader: NotesReader, reading: ReaderState?) {
     val run = rememberRunner()
     val sections = remember(snap, session.id) { snap.sectionsOf(session.id).map { it to snap.points(it.id) }.filter { it.second.isNotEmpty() } }
     val linkedElsewhere = remember(snap) { snap.links.groupBy { it.bulletId } }
@@ -331,7 +347,32 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         return
     }
 
-    LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
+    val spoken = remember(snap, session.id) { NotesReader.lines(snap, session.id) }
+    val nowKey = reading?.current?.key
+    // Lazy-list index of every line, so the list can follow the voice.
+    val indexOf = remember(sections) {
+        val m = HashMap<String, Int>(); var i = 2
+        sections.forEach { (sec, pts) -> m["h:" + sec.id] = i++; pts.forEach { m[sec.id + it.bullet.id] = i++ } }
+        m
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(nowKey) {
+        val target = nowKey?.let { indexOf[it] } ?: return@LaunchedEffect
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.none { it.index == target } || visible.lastOrNull()?.index == target) listState.animateScrollToItem((target - 1).coerceAtLeast(0))
+    }
+
+    LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
+        item {
+            if (spoken.isNotEmpty() && reading == null) Row(
+                Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
+                    .clickable(role = Role.Button) { reader.play(session.id, spoken) }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.Speaker, null, tint = C.Ink, modifier = Modifier.size(18.dp))
+                Text("Listen to notes", style = ts(14, 600))
+                Text("~${NotesReader.minutes(spoken)} min", style = ts(13, 400, C.G500))
+            }
+        }
         item {
             Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("${plural(total, "point")} · updated ${relativeDay(session.updatedAt, today).lowercase()}", style = ts(12, 400, C.G600))
@@ -342,13 +383,21 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
             }
         }
         sections.forEach { (section, points) ->
-            item(key = "h" + section.id) { Text(section.title, style = ts(16, 700), modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)) }
+            item(key = "h" + section.id) {
+                val now = nowKey == "h:" + section.id
+                Text(section.title, style = ts(16, 700), modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
+                    .clip(RoundedCornerShape(6.dp)).background(if (now) C.BlueBg else androidx.compose.ui.graphics.Color.Transparent)
+                    .then(if (reading != null) Modifier.clickable { spoken.indexOfFirst { it.key == "h:" + section.id }.takeIf { it >= 0 }?.let { reader.play(session.id, spoken, it) } } else Modifier)
+                    .padding(horizontal = if (now) 6.dp else 0.dp))
+            }
             items(points, key = { section.id + it.bullet.id }) { p ->
                 val key = section.id + p.bullet.id
                 val isSel = selected == key
                 val from = if (p.link != null) snap.sessions.firstOrNull { s -> snap.section(p.bullet.sectionId)?.sessionId == s.id } else null
+                val now = nowKey == key
                 Column(Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
+                    if (p.bullet.isDiagram) MermaidDiagram(p.bullet.content, Modifier.padding(vertical = 6.dp), onLabel = { selected = if (isSel) null else key })
+                    else Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
                         .clickable { selected = if (isSel) null else key }.padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(Modifier.padding(top = 8.dp).size(7.dp).clip(CircleShape).background(if (p.bullet.dateAdded >= weekAgo) C.BlueDot else C.G300))
@@ -380,7 +429,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     }
 
     editing?.let { p ->
-        TextPrompt("Edit point", p.bullet.content, "Save", singleLine = false, onDismiss = { editing = null }) { text ->
+        TextPrompt(if (p.bullet.isDiagram) "Edit diagram code" else "Edit point", p.bullet.content, "Save", singleLine = false, onDismiss = { editing = null }) { text ->
             editing = null
             run.go { repo.editBullet(p.bullet.id, text) }
         }
@@ -389,9 +438,36 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         if (p.link != null) Confirm("Remove from this topic?", "The point stays in the session it came from.", "Remove", onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.unlink(p.link.id) }
-        } else Confirm("Delete this point?", "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
+        } else Confirm(if (p.bullet.isDiagram) "Delete this diagram?" else "Delete this point?", "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.deleteBullet(p.bullet.id) }
+        }
+    }
+}
+
+
+/** The read-aloud controls, pinned under the notes while a session is being read. */
+@Composable
+private fun ReaderBar(reader: NotesReader, state: ReaderState) {
+    Column(Modifier.fillMaxWidth().background(C.Ink).padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(if (state.playing) "Reading" else "Paused", style = ts(11, 500, C.G300))
+                Text(state.current?.sectionTitle.orEmpty(), style = ts(14, 600, C.White), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text("${state.speed.toString().removeSuffix(".0")}×", style = ts(13, 600, C.White),
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { reader.cycleSpeed() }
+                    .semantics { contentDescription = "Reading speed" }.padding(horizontal = 10.dp, vertical = 12.dp))
+            IconBtn(Ic.Replay, "Previous section", tint = C.White, iconSize = 20.dp) { reader.skipSection(false) }
+            IconBtn(if (state.playing) Ic.Pause else Ic.Play, if (state.playing) "Pause" else "Resume", tint = C.Ink, bg = C.White, iconSize = 20.dp) {
+                if (state.playing) reader.pause() else reader.resume()
+            }
+            IconBtn(Ic.SkipNext, "Next section", tint = C.White, iconSize = 20.dp) { reader.skipSection(true) }
+            IconBtn(Ic.Stop, "Stop reading", tint = C.White, iconSize = 18.dp) { reader.stop() }
+        }
+        val progress = if (state.lines.size <= 1) 0f else state.index / (state.lines.size - 1).toFloat()
+        Box(Modifier.padding(top = 8.dp, end = 8.dp).fillMaxWidth().height(3.dp).clip(CircleShape).background(C.G700)) {
+            Box(Modifier.fillMaxWidth(progress).height(3.dp).clip(CircleShape).background(C.White))
         }
     }
 }

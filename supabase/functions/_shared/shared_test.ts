@@ -33,6 +33,7 @@ Deno.test("schema only allows real refs", () => {
   const { refs } = renderPreviousNotes(sections, true);
   const s = JSON.stringify(buildSchema("topic", refs));
   assert(s.includes('"enum":["NEW","S1","S2"]') && s.includes('"enum":["END","S1.1","S1.2","S2.1"]'));
+  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid"]}') && s.includes('"required":["kind","text","insert_after"]'));
 });
 
 Deno.test("model answer → apply payload, bad refs ignored", () => {
@@ -43,13 +44,33 @@ Deno.test("model answer → apply payload, bad refs ignored", () => {
     { target: "NEW", title: "Empty", bullets: [] },
   ] }, refs);
   assertEquals(p.sections.length, 2);
-  assertEquals(p.sections[0], { section_id: "sec-1", title: "Basics", bullets: [{ text: "a", after_bullet_id: "b-1" }, { text: "b", after_bullet_id: null }] });
+  assertEquals(p.sections[0], { section_id: "sec-1", title: "Basics", bullets: [{ kind: "text", text: "a", after_bullet_id: "b-1" }, { kind: "text", text: "b", after_bullet_id: null }] });
   assertEquals(p.sections[1].section_id, null);
   const proj = toApplyPayload("project", { sections: [{ target: "S1", title: "T", bullets: [{ text: "x", insert_after: "S1.1" }] }] }, refs);
-  assertEquals(proj.sections[0], { section_id: null, title: "T", bullets: [{ text: "x", after_bullet_id: null }] });
+  assertEquals(proj.sections[0], { section_id: null, title: "T", bullets: [{ kind: "text", text: "x", after_bullet_id: null }] });
+});
+
+Deno.test("diagrams: fences stripped, empty ones dropped, existing ones summarised", () => {
+  const { refs } = renderPreviousNotes(sections, true);
+  const p = toApplyPayload("project", { sections: [{ title: "Flow", bullets: [
+    { kind: "text", text: "Generator fills grid" },
+    { kind: "mermaid", text: "```mermaid\nflowchart TD\n  A --> B\n```" },
+    { kind: "mermaid", text: "```mermaid\n```" },
+    { kind: "weird", text: "falls back to text" },
+  ] }] }, refs);
+  assertEquals(p.sections[0].bullets.map((b) => [b.kind, b.text]), [
+    ["text", "Generator fills grid"], ["mermaid", "flowchart TD\n  A --> B"], ["text", "falls back to text"]]);
+  const prev = renderPreviousNotes([{ id: "s", title: "Flow", bullets: [{ id: "d", content: "flowchart TD\n  A --> B", kind: "mermaid" }] }], true);
+  assert(prev.text.includes("- [S1.1] (diagram already drawn: flowchart TD A --> B)"));
+  const r = buildNotesRequest({ sessionType: "topic", sessionTitle: "x", previousNotes: "", refs, newText: "y", images: [] });
+  assert(r.system.includes("# DIAGRAMS (optional") && r.system.includes("never replaces text"));
 });
 
 Deno.test("chat summary wording", () => {
+  assertEquals(summarize({ new_bullets: 4, new_diagrams: 1, sections: [{ title: "Flow", is_new: true, added: 4, inline: 0, diagrams: 1 }] }, 0),
+    "Added **3 points** and **1 diagram** in a new section: **Flow**.");
+  assertEquals(summarize({ new_bullets: 3, new_diagrams: 1, sections: [{ title: "Edge", is_new: false, added: 3, inline: 2, diagrams: 1 }] }, 0),
+    "Added **2 points** and **1 diagram**: 2 inline in **Edge** + 1 diagram.");
   assertEquals(summarize({ new_bullets: 12, sections: [{ title: "Basics", is_new: true, added: 7, inline: 0 }, { title: "Edge servers", is_new: true, added: 5, inline: 0 }] }, 0),
     "Added **12 points** in 2 new sections: **Basics**, **Edge servers**.");
   assertEquals(summarize({ new_bullets: 5, sections: [{ title: "Edge servers", is_new: false, added: 3, inline: 3 }, { title: "Caching", is_new: true, added: 2, inline: 0 }] }, 1),

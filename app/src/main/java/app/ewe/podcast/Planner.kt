@@ -67,7 +67,7 @@ object Planner {
             if (r.id in exclude || r.nextDueDate > today.toString()) return@mapNotNull null
             val section = s.section(r.sectionId) ?: return@mapNotNull null
             val session = s.session(section.sessionId)?.takeIf { it.isActive } ?: return@mapNotNull null
-            val notes = s.ownBullets(section.id).filter { it.dateAdded == r.addedDate }.sortedBy { it.position }.map { it.content }
+            val notes = s.ownBullets(section.id).filter { it.dateAdded == r.addedDate && !it.isDiagram }.sortedBy { it.position }.map { it.content }
             if (notes.isEmpty()) return@mapNotNull null
             val rev = r.revisionsDone + 1
             DueItem(r.id, session.id, session.title, section.title, section.position, r.addedDate, r.intervalDays, rev, Level.of(rev, perLevel), notes)

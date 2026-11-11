@@ -43,6 +43,9 @@ object Ic {
     val SkipNext = stroke("M5 5l10 7-10 7zM19 5v14")
     val Close = stroke("M6 6l12 12M18 6L6 18")
     val Check = stroke("M5 12.5l4.5 4.5L19 7.500", 2.4f)
+    val Copy = stroke("M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1")
+    val Speaker = stroke("M4 9h4l5-4v14l-5-4H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.500 8.500 0 0 1 0 12")
+    val Stop = fill("M7 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z")
     val Play = fill("M8 5l11 7-11 7z")
     val Pause = fill("M7 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM15 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z")
 }

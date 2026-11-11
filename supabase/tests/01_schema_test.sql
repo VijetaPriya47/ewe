@@ -67,6 +67,17 @@ begin
   v_res := apply_notes(v_sud, null, jsonb_build_object('sections', jsonb_build_array(jsonb_build_object(
      'section_id', v_basics, 'title', 'Grid', 'bullets', jsonb_build_array(jsonb_build_object('text', 'Cache static puzzle assets'))))), date '2026-11-09');
   perform pg_temp.ok((v_res->>'new_sections')::int = 1, 'project appends');
+  -- diagrams are bullets of kind 'mermaid', counted separately
+  v_res := apply_notes(v_sud, null, '{"sections":[{"section_id":null,"title":"Flow","bullets":[
+     {"text":"Generator fills grid, then removes cells"},
+     {"text":"flowchart TD\n  A[Fill grid] --> B[Remove cells]","kind":"mermaid"},
+     {"text":"odd kind falls back to text","kind":"html"}]}]}', date '2026-11-09');
+  perform pg_temp.ok((v_res->>'new_diagrams')::int = 1 and (v_res->>'new_bullets')::int = 3
+                     and (v_res->'sections'->0->>'diagrams')::int = 1, 'diagram counts: ' || v_res::text);
+  perform pg_temp.ok((select count(*) from bullets where kind = 'mermaid') = 1
+                     and (select kind from bullets where content = 'odd kind falls back to text') = 'text', 'kinds stored');
+  perform pg_temp.ok(pg_temp.fails('insert into bullets (section_id, content, kind, position, origin_session_id) select id, ''x'', ''svg'', 9, session_id from sections limit 1'), 'unknown kind rejected');
+  delete from bullets where section_id in (select id from sections where title = 'Flow');
   select b.id into v_sb from bullets b join sections s on s.id = b.section_id where s.session_id = v_sud;
 
   -- linking rules

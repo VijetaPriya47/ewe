@@ -84,6 +84,11 @@ asks for an email and password. Then open Settings, add a provider key and pick 
   `ADD_TO_SECTION`, `NEW_SECTION_IN_TOPIC` or `KEEP_IN_CURRENT`. A linked point is one row shown
   in both places. Changing the embedding model stages a rebuild and swaps it in only when every
   row is done, so "Switch back" keeps working until then.
+- **Diagrams**: when the material shows a figure or a flow, the notes AI may add a small Mermaid
+  diagram as an extra bullet (`kind = 'mermaid'`). The app draws it with the bundled Mermaid
+  library (offline) and offers Copy / Code. Text bullets still carry every point.
+- **Listen to notes**: any session's notes can be read aloud on the phone (Android text-to-speech,
+  no AI), with the current line highlighted, section skipping and speed control.
 - **Search** runs on the phone's offline copy (keywords). When the index is complete, sections
   found by meaning are added below ("hybrid").
 - **Podcast**: each batch of notes (a section + the day it was added) has its own schedule:
@@ -105,4 +110,7 @@ deno test --allow-net --allow-env supabase/functions/_shared/shared_test.ts
 inline placement, linking, rebuild and model switch, search by meaning, revision, recreate). It is
 skipped unless the `EWE_E2E_*` environment variables described in the file are set.
 
+Changes per release are in [CHANGELOG.md](CHANGELOG.md).
+
 The Inter typeface is bundled under the SIL Open Font License (`app/src/main/INTER-OFL.txt`).
+Mermaid is bundled under the MIT License (`app/src/main/assets/mermaid/LICENSE.txt`).

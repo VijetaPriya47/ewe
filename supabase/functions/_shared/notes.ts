@@ -5,7 +5,7 @@ import type { ImageInput, JsonRequest, Part } from "./providers.ts";
 
 export type SessionType = "topic" | "project";
 
-export interface ExistingBullet { id: string; content: string }
+export interface ExistingBullet { id: string; content: string; kind?: string }
 export interface ExistingSection { id: string; title: string; bullets: ExistingBullet[] }
 
 export interface RefMaps {
@@ -27,10 +27,22 @@ export function renderPreviousNotes(sections: ExistingSection[], withRefs: boole
     s.bullets.forEach((b, j) => {
       const bRef = `${sRef}.${j + 1}`;
       refs.bulletByRef.set(bRef, b.id);
-      lines.push(withRefs ? `- [${bRef}] ${b.content}` : `- ${b.content}`);
+      const text = b.kind === "mermaid" ? `(diagram already drawn: ${diagramSummary(b.content)})` : b.content;
+      lines.push(withRefs ? `- [${bRef}] ${text}` : `- ${text}`);
     });
   });
   return { text: lines.join("\n"), refs };
+}
+
+/** One line describing an existing diagram, so the model knows it exists without re-reading all of it. */
+function diagramSummary(code: string): string {
+  const flat = code.replace(/\s+/g, " ").trim();
+  return flat.length > 120 ? flat.slice(0, 117) + "…" : flat;
+}
+
+/** Models sometimes wrap code in fences or add a language tag; keep only the Mermaid code. */
+export function cleanMermaid(text: string): string {
+  return text.trim().replace(/^```(?:mermaid)?\s*\n?/i, "").replace(/\n?```\s*$/, "").trim();
 }
 
 const COMMON_RULES = `
@@ -55,6 +67,17 @@ const COMMON_RULES = `
 - Use "→" for cause/effect, "vs" for comparisons, "e.g." for examples.
 - If text is unreadable, skip it — never guess.
 - If the NEW CONTENT has nothing new, return "sections": [].
+- Every ordinary bullet has "kind": "text".
+
+# DIAGRAMS (optional — most uploads need none)
+- Add a diagram only when the NEW CONTENT shows a figure, or describes a process, flow, sequence,
+  hierarchy, state change or relationships that are much clearer as a picture.
+- A diagram is one extra bullet with "kind": "mermaid" and "text" = Mermaid code only (no \`\`\` fences).
+- Put it in the group it illustrates, right after the text bullets it summarises.
+- Use one of: flowchart TD, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, mindmap.
+- Keep it small: at most 12 nodes, short labels. Wrap labels with symbols in quotes: A["Cache (edge)"].
+- At most 2 diagrams per upload. Never repeat a diagram that already exists in PREVIOUS NOTES.
+- A diagram never replaces text: every point must still be in a text bullet.
 `.trim();
 
 const TOPIC_RULES = `
@@ -109,7 +132,7 @@ ${opts.images.length ? `[${opts.images.length} image(s) attached below]\n` : ""}
 export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<string, unknown> {
   const bullet: Record<string, unknown> = {
     type: "object", additionalProperties: false,
-    properties: { text: { type: "string" } }, required: ["text"],
+    properties: { kind: { type: "string", enum: ["text", "mermaid"] }, text: { type: "string" } }, required: ["kind", "text"],
   };
   const group: Record<string, unknown> = {
     type: "object", additionalProperties: false,
@@ -121,7 +144,7 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
     const bRefs = [...refs.bulletByRef.keys()], sRefs = [...refs.sectionByRef.keys()];
     (bullet.properties as Record<string, unknown>).insert_after =
       bRefs.length <= MAX_ENUM ? { type: "string", enum: ["END", ...bRefs] } : { type: "string" };
-    bullet.required = ["text", "insert_after"];
+    bullet.required = ["kind", "text", "insert_after"];
     (group.properties as Record<string, unknown>).target =
       sRefs.length <= MAX_ENUM ? { type: "string", enum: ["NEW", ...sRefs] } : { type: "string" };
     group.required = ["target", "title", "bullets"];
@@ -134,7 +157,7 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
   };
 }
 
-interface ModelBullet { text?: string; insert_after?: string }
+interface ModelBullet { kind?: string; text?: string; insert_after?: string }
 interface ModelGroup { target?: string; title?: string; bullets?: ModelBullet[] }
 
 /** Convert the model's ref-based answer into the payload apply_notes() expects. */
@@ -146,41 +169,48 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
         section_id: sectionId,
         title: String(g.title ?? ""),
         bullets: (g.bullets ?? [])
-          .filter((b) => typeof b?.text === "string" && b.text.trim().length > 0)
+          .filter((b) => typeof b?.text === "string" && (b.kind === "mermaid" ? cleanMermaid(b.text) : b.text.trim()).length > 0)
           .map((b) => {
             // only honour anchors that live in the chosen section
             const inSection = sectionId && b.insert_after?.startsWith(`${g.target}.`);
             const anchor = inSection ? refs.bulletByRef.get(b.insert_after!) ?? null : null;
-            return { text: b.text!.trim(), after_bullet_id: anchor };
+            const kind = b.kind === "mermaid" ? "mermaid" : "text";
+            return { kind, text: kind === "mermaid" ? cleanMermaid(b.text!) : b.text!.trim(), after_bullet_id: anchor };
           }),
       };
     }).filter((s) => s.bullets.length > 0),
   };
 }
 
-interface AppliedSection { title: string; is_new: boolean; added: number; inline: number }
+interface AppliedSection { title: string; is_new: boolean; added: number; inline: number; diagrams?: number }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
-/** The short chat reply. **bold** is rendered by the app. */
-export function summarize(result: { new_bullets: number; sections: AppliedSection[] }, skipped: number): string {
+/** The short chat reply. **bold** is rendered by the app. Diagrams are counted apart from points. */
+export function summarize(result: { new_bullets: number; new_diagrams?: number; sections: AppliedSection[] }, skipped: number): string {
   const skippedLine = skipped > 0 ? `\n${plural(skipped, "point")} skipped: already in your notes.` : "";
+  const diagrams = result.new_diagrams ?? 0;
+  const points = result.new_bullets - diagrams;
   if (result.new_bullets === 0) return "Nothing new here — your notes already cover this.";
 
+  const what = [points > 0 ? `**${plural(points, "point")}**` : "", diagrams > 0 ? `**${plural(diagrams, "diagram")}**` : ""]
+    .filter(Boolean).join(" and ");
   const secs = result.sections;
   const allNew = secs.every((s) => s.is_new);
   let line: string;
   if (allNew) {
-    line = `Added **${plural(result.new_bullets, "point")}** in ${secs.length === 1 ? "a new section" : `${secs.length} new sections`}: ` +
+    line = `Added ${what} in ${secs.length === 1 ? "a new section" : `${secs.length} new sections`}: ` +
       secs.map((s) => `**${s.title}**`).join(", ") + ".";
   } else {
     const bits = secs.map((s) => {
-      if (s.is_new) return `${s.added} in a new section **${s.title}**`;
-      if (s.inline === s.added) return `${s.added} inline in **${s.title}**`;
-      if (s.inline === 0) return `${s.added} in **${s.title}**`;
-      return `${s.added} in **${s.title}** (${s.inline} inline)`;
+      const n = s.added - (s.diagrams ?? 0);
+      const d = s.diagrams ? ` + ${plural(s.diagrams, "diagram")}` : "";
+      if (s.is_new) return `${n} in a new section **${s.title}**${d}`;
+      if (n > 0 && s.inline === n) return `${n} inline in **${s.title}**${d}`;
+      if (s.inline === 0 || n === 0) return `${n} in **${s.title}**${d}`;
+      return `${n} in **${s.title}** (${s.inline} inline)${d}`;
     });
-    line = `Added **${plural(result.new_bullets, "point")}**: ${bits.join(", ")}.`;
+    line = `Added ${what}: ${bits.join(", ")}.`;
   }
   return line + skippedLine;
 }

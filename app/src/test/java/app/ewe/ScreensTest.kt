@@ -93,6 +93,7 @@ class ScreensTest {
             b("edge", "Request routed to nearest PoP via DNS or Anycast", 0, "cdn", 1.5),
             b("edge", "Anycast: same IP announced from many PoPs → network picks closest", 0, "cdn", 1.75),
             b("edge", "Cache miss → edge fetches from origin, then stores copy", 9, "cdn", 2.0),
+            Bullet("diag", "edge", "flowchart TD\n  U[User] --> D[DNS]\n  D --> P[Nearest PoP]\n  P -->|hit| C[Cached copy]\n  P -->|miss| O[Origin]", 2.5, d(0), "cdn", "m3", kind = "mermaid"),
             b("caching", "TTL = how long edge keeps a copy before re-checking origin", 0, "cdn", 1.0),
             b("caching", "Purge by path to remove stale content before TTL ends", 0, "cdn", 2.0),
             b("grid", "9×9 grid; each row, column and 3×3 box holds 1–9 once", 1, "sud", 1.0),
@@ -180,6 +181,29 @@ class ScreensTest {
         shot("4_session_notes_selected")
         compose.onNodeWithContentDescription("Delete point").performClick()
         shot("4_session_notes_delete")
+    }
+
+    @Test fun listening() {
+        val r = repo(snapshot(configured))
+        show("4_session_notes_listen_button") { SessionScreen(r, "cdn", true, {}, {}, {}) }
+        compose.onNodeWithText("Listen to notes").performClick()
+        shot("4_session_notes_listening")
+        compose.onNodeWithContentDescription("Pause").performClick()
+        compose.onNodeWithContentDescription("Next section").performClick()
+        shot("4_session_notes_listening_paused")
+        compose.onNodeWithContentDescription("Stop reading").performClick()
+        compose.onNodeWithText("Listen to notes").assertExists()
+        app.ewe.podcast.NotesReader.get(context).shutdown()
+    }
+
+    @Test fun diagram() {
+        val r = repo(snapshot(configured))
+        show("4_session_notes_diagram") { SessionScreen(r, "cdn", true, {}, {}, {}) }
+        compose.onNodeWithContentDescription("Copy diagram code").performScrollTo().performClick()
+        val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
+        org.junit.Assert.assertTrue(clip.startsWith("flowchart TD"))
+        compose.onNodeWithText("Code").performClick()
+        shot("4_session_notes_diagram_code")
     }
 
     @Test fun options() {

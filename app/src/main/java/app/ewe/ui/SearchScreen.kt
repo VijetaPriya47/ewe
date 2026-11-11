@@ -114,7 +114,11 @@ fun SearchScreen(repo: Repository, onBack: () -> Unit, onOpen: (sessionId: Strin
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.G50).clickable { onOpen(n.session.id, true) }.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(highlight("${n.session.title} › ${n.section.title}", query), style = ts(12, 400, C.G600))
-                        Text(highlight(n.point.bullet.content, query), style = ts(15, 400, C.Ink, 1.45f))
+                        if (n.point.bullet.isDiagram) {
+                            Text("Diagram", style = ts(11, 600, C.G500))
+                            Text(highlight(n.point.bullet.content, query), style = ts(13, 400, C.G700, 1.4f).copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                                maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        } else Text(highlight(n.point.bullet.content, query), style = ts(15, 400, C.Ink, 1.45f))
                         Text("Added ${longDate(n.point.bullet.dateAdded)}" + (n.from?.let { " · from ${it.title}" } ?: ""), style = ts(12, 400, C.G500))
                     }
                 }

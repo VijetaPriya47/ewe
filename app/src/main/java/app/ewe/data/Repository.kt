@@ -151,7 +151,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             val s = coroutineScope {
                 val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at") }
                 val sections = async { api.selectAll("sections", "id,session_id,title,position") }
-                val bullets = async { api.selectAll("bullets", "id,section_id,content,position,date_added,origin_session_id,origin_message_id") }
+                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
                 val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at") }
                 val schedule = async { api.selectAll("revision_schedule", "id,section_id,added_date,interval_days,revisions_done,next_due_date,last_revised") }

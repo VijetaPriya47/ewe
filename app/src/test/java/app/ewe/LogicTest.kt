@@ -107,6 +107,19 @@ class LogicTest {
         assertEquals(3, Planner.due(snap, LocalDate.parse("2026-11-12"), 2).size) // skipped days carry over
     }
 
+    @Test fun `diagrams stay out of the podcast and the read-aloud`() {
+        val withDiagram = snap.copy(bullets = snap.bullets + Bullet("d1", "c1", "flowchart TD\n  A --> B", 1.5, "2026-11-08", "cdn", kind = "mermaid"))
+        val r1 = Planner.due(withDiagram, LocalDate.parse("2026-11-10"), 2).first { it.scheduleId == "r1" }
+        assertEquals(listOf("TTL = how long edge keeps a copy"), r1.notes)
+        val lines = app.ewe.podcast.NotesReader.lines(withDiagram, "cdn")
+        assertEquals(listOf("h:c1", "c1b1", "c1b2", "c1b3"), lines.map { it.key })
+        assertEquals("Caching.", lines[0].text)
+        assertEquals("TTL is how long edge keeps a copy.", lines[1].text)
+        assertTrue(lines.none { it.text.contains("flowchart") })
+        assertEquals(1, app.ewe.podcast.NotesReader.minutes(lines))
+        assertTrue(app.ewe.podcast.NotesReader.lines(withDiagram, "nope").isEmpty())
+    }
+
     @Test fun `snapshot shows a linked point in both places and survives the offline cache`() {
         assertEquals(listOf("b1", "b2", "b3"), snap.points("c1").map { it.bullet.id })
         assertEquals("l1", snap.points("c1").last().link?.id)

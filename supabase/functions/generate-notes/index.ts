@@ -39,11 +39,11 @@ serve(async (req, body) => {
 
   // 2. Previous notes of THIS session (context — old photos are never re-sent)
   const rows = must(await db.from("sections")
-    .select("id, title, position, bullets!bullets_section_id_fkey(id, content, position)").eq("session_id", sessionId).order("position")) as
-    { id: string; title: string; bullets: { id: string; content: string; position: number }[] }[];
+    .select("id, title, position, bullets!bullets_section_id_fkey(id, content, kind, position)").eq("session_id", sessionId).order("position")) as
+    { id: string; title: string; bullets: { id: string; content: string; kind: string; position: number }[] }[];
   const sections: ExistingSection[] = rows.map((s) => ({
     id: s.id, title: s.title,
-    bullets: [...(s.bullets ?? [])].sort((a, b) => a.position - b.position).map((b) => ({ id: b.id, content: b.content })),
+    bullets: [...(s.bullets ?? [])].sort((a, b) => a.position - b.position).map((b) => ({ id: b.id, content: b.content, kind: b.kind })),
   })).filter((s) => s.bullets.length > 0);
   const { text: previousNotes, refs } = renderPreviousNotes(sections, type === "topic");
 
@@ -60,10 +60,10 @@ serve(async (req, body) => {
   const payload = toApplyPayload(type, output as never, refs);
   const result = must(await db.rpc("apply_notes", {
     p_session_id: sessionId, p_message_id: msg.id, p_payload: payload, p_today: localDate,
-  })) as { new_bullets: number; new_sections: number; sections: never[] };
+  })) as { new_bullets: number; new_diagrams: number; new_sections: number; sections: never[] };
 
   const summary = summarize(result, Math.max(0, Number(output?.skipped_duplicates) || 0));
   must(await db.from("messages").insert({ session_id: sessionId, role: "assistant", content: summary }).select("id").single());
 
-  return { user_message_id: msg.id, summary, new_bullets: result.new_bullets, new_sections: result.new_sections };
+  return { user_message_id: msg.id, summary, new_bullets: result.new_bullets, new_diagrams: result.new_diagrams, new_sections: result.new_sections };
 });
