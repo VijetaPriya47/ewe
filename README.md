@@ -38,7 +38,7 @@ the four migrations in `supabase/migrations/` are applied and both functions are
 
 1. Supabase dashboard → project **ewe** → Project Settings → Integrations → **GitHub** → connect
    `VijetaPriya47/ewe`.
-2. Supabase directory: `supabase`. Production branch: `main`. Turn on **Deploy to production**.
+2. Working directory: `.` (the folder that contains `supabase/`). Production branch: `main`. Turn on **Deploy to production**.
 
 From then on Supabase reads `supabase/migrations/`, `supabase/functions/` and `supabase/config.toml`
 from GitHub on every push to `main`. The migration files here carry the same version numbers as
