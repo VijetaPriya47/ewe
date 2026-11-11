@@ -1,0 +1,6 @@
+# The functions check the caller themselves: every query runs as the signed-in user.
+[functions.generate-notes]
+verify_jwt = true
+
+[functions.linking]
+verify_jwt = true
