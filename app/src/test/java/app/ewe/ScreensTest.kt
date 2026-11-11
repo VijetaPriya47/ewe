@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -152,7 +153,7 @@ class ScreensTest {
     @Test fun home() {
         val r = repo(snapshot(configured))
         show("1_home") { HomeScreen(r, EpisodeStore(context), {}, {}, {}, {}, {}) }
-        compose.onNodeWithText("Inactive", useUnmergedTree = true).performClick()
+        compose.onAllNodesWithText("Inactive")[0].performClick()
         shot("1_home_inactive_filter")
     }
 
@@ -177,8 +178,8 @@ class ScreensTest {
         show("4_session_notes") { SessionScreen(r, "cdn", true, {}, {}, {}) }
         compose.onNodeWithText("Request routed to nearest PoP via DNS or Anycast").performClick()
         shot("4_session_notes_selected")
-        compose.onNodeWithContentDescription("Edit point").performClick()
-        shot("4_session_notes_edit")
+        compose.onNodeWithContentDescription("Delete point").performClick()
+        shot("4_session_notes_delete")
     }
 
     @Test fun options() {
@@ -204,7 +205,7 @@ class ScreensTest {
         show("7_settings_ready") { SettingsScreen(r, {}) }
         compose.onNodeWithText("Search mode").performScrollTo()
         shot("7_settings_ready_linking")
-        compose.onNodeWithText("Account").performScrollTo()
+        compose.onNodeWithText("Sign out").performScrollTo()
         shot("7_settings_ready_bottom")
     }
 
@@ -240,6 +241,9 @@ class ScreensTest {
             ch("r8", "System Design · Ch 4", "Sharding", 16, 16, 5, "Key points", 120), ch("r9", "Load Balancers", "Health checks", 32, 32, 6, "Key points", 90),
             ch(null, "Outro", "", 0, 0, 0, "", 30),
         ), deferred = 1, heard = setOf("r4"), marked = setOf("r3")))
+        // No media service in this harness: the screen must still render without a player connection.
+        org.robolectric.Shadows.shadowOf(context as android.app.Application)
+            .declareComponentUnbindable(android.content.ComponentName(context, app.ewe.podcast.PlaybackService::class.java))
         show("8_revision_ready") { RevisionScreen(r, store, {}, {}) }
     }
 }

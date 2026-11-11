@@ -199,11 +199,12 @@ fun OutlineButton(text: String, modifier: Modifier = Modifier, icon: ImageVector
 
 /** Small bordered button used inside settings rows ("Edit", "gpt-4o ▾"). */
 @Composable
-fun SmallButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+fun SmallButton(text: String, enabled: Boolean = true, caret: Boolean = false, onClick: () -> Unit) {
     Surface(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(10.dp), color = C.White,
         border = BorderStroke(1.dp, C.G200), modifier = Modifier.heightIn(min = 36.dp)) {
-        Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-            Text(text, style = ts(13, 500), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, style = ts(13, 500), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (caret) Text(" ▾", style = ts(13, 500, C.G600))
         }
     }
 }

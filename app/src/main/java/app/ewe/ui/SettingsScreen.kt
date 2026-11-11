@@ -100,7 +100,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
 
             // ───────────── Notes ─────────────
             Group("Notes · always on") {
-                SettingRow("Notes model", "Reads photos, writes the notes") { SmallButton(modelLabel(s.notesProvider, s.notesModel) + " ▾") { picking = Pick.NOTES } }
+                SettingRow("Notes model", null) { SmallButton(modelLabel(s.notesProvider, s.notesModel), caret = true) { picking = Pick.NOTES } }
             }
 
             // ───────────── Linking (RAG) ─────────────
@@ -134,12 +134,12 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                 }
                 Divider()
                 Column(Modifier.alpha(if (s.ragEnabled) 1f else 0.45f)) {
-                    SettingRow("Embedding model", "Index built with: ${activeLabel ?: "nothing yet"}") {
-                        SmallButton((selected?.second ?: "Choose") + " ▾", enabled = s.ragEnabled && rebuild?.error == null && rebuild == null) { picking = Pick.EMBEDDING }
+                    SettingRow("Embedding model", "Built with: ${Repository.splitModel(rag.activeModel ?: s.ragActiveModel)?.second ?: "nothing yet"}") {
+                        SmallButton((selected?.second ?: "Choose"), enabled = s.ragEnabled && rebuild?.error == null && rebuild == null, caret = true) { picking = Pick.EMBEDDING }
                     }
                     Divider()
-                    SettingRow("Placement model", "Picks 1 of 3 choices — use the cheapest") {
-                        SmallButton(modelLabel(s.placementProvider, s.placementModel) + " ▾", enabled = s.ragEnabled) { picking = Pick.PLACEMENT }
+                    SettingRow("Placement model", "Picks 1 of 3 — use the cheapest") {
+                        SmallButton(modelLabel(s.placementProvider, s.placementModel), enabled = s.ragEnabled, caret = true) { picking = Pick.PLACEMENT }
                     }
                 }
                 Divider()
@@ -160,8 +160,8 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                 }
                 Column(Modifier.alpha(if (s.podcastEnabled) 1f else 0.45f)) {
                     Divider()
-                    SettingRow("Podcast model", "Writes the day's script") {
-                        SmallButton(modelLabel(s.podcastProvider, s.podcastModel) + " ▾", enabled = s.podcastEnabled) { picking = Pick.PODCAST }
+                    SettingRow("Podcast model", null) {
+                        SmallButton(modelLabel(s.podcastProvider, s.podcastModel), enabled = s.podcastEnabled, caret = true) { picking = Pick.PODCAST }
                     }
                     Divider()
                     SettingRow("Max gap between revisions", "1 → 2 → 4 → 8 … stops growing here") {
@@ -277,7 +277,7 @@ private fun SettingRow(title: String, detail: String?, trailing: @Composable () 
             Text(title, style = ts(14, 500))
             if (!detail.isNullOrEmpty()) Text(detail, style = ts(12, 400, C.G600, 1.4f))
         }
-        Box(Modifier.widthIn(max = 190.dp)) { trailing() }
+        Box(Modifier.widthIn(max = 168.dp)) { trailing() }
     }
 }
 

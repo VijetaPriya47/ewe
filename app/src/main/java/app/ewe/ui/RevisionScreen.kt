@@ -291,7 +291,7 @@ private fun EpisodeRow(section: String, sub: String, day: Int, detail: String, p
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(section, style = ts(15, 600), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(sub, style = ts(12, 400, C.G600), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, style = ts(12, 400, C.G600, 1.35f), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (state == RowState.MARKED) Tag("Listened", C.GreenBg, C.Green, 600) else Tag("Day $day", C.BlueBg, C.Blue, 600)

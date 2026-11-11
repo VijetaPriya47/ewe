@@ -64,6 +64,8 @@ android {
         unitTests.all {
             // Screen renders are written to app/build/screens by the ScreensTest.
             it.systemProperty("roborazzi.test.record", "true")
+            it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
+            it.systemProperty("robolectric.dependency.repo.id", "central-mirror")
             it.maxHeapSize = "2g"
         }
     }
