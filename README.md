@@ -29,34 +29,38 @@ supabase/tests/              SQL tests that run against a local Postgres
 
 ## Set up
 
-### 1. Supabase (once)
+### 1. Supabase
 
-1. Create a project at supabase.com (the free tier is enough).
-2. Set up the database and functions, either way:
-   - **From GitHub, no computer needed:** add the repository secrets `SUPABASE_ACCESS_TOKEN`
-     (supabase.com → Account → Access tokens), `SUPABASE_PROJECT_REF` (the id in your project URL)
-     and `SUPABASE_DB_PASSWORD`, then run **Actions → Deploy Supabase**.
-   - **From a computer** with the Supabase CLI:
-     ```bash
-     supabase link --project-ref <your-project-ref>
-     supabase db push
-     supabase functions deploy generate-notes
-     supabase functions deploy linking
-     ```
-3. Optional: under Authentication → Sign In / Providers → Email, turn off "Confirm email" so a
-   new account can sign in straight away.
+The project **ewe** (`rotvvbjfzfkkggpjuvwd`, Mumbai) is already set up from this repository:
+the four migrations in `supabase/migrations/` are applied and both functions are deployed.
+
+**Let Supabase deploy from this repository** (so a push to `main` updates the database and functions):
+
+1. Supabase dashboard → project **ewe** → Project Settings → Integrations → **GitHub** → connect
+   `VijetaPriya47/ewe`.
+2. Supabase directory: `supabase`. Production branch: `main`. Turn on **Deploy to production**.
+
+From then on Supabase reads `supabase/migrations/`, `supabase/functions/` and `supabase/config.toml`
+from GitHub on every push to `main`. The migration files here carry the same version numbers as
+the ones already applied, so nothing is run twice.
+
+Alternative without the integration: add the repository secrets `SUPABASE_ACCESS_TOKEN`,
+`SUPABASE_PROJECT_REF` and `SUPABASE_DB_PASSWORD`, then run **Actions → Deploy Supabase**.
+
+New accounts must confirm their email by default. Either open the link in the confirmation email
+(the page it lands on may not load — the account is confirmed anyway), or turn the check off under
+Authentication → Sign In / Providers → Email → "Confirm email".
 
 ### 2. The app
 
 Every push to `main` builds the APK. Download `ewe.apk` from the repository's **Releases** page
-(the release named "latest") on your phone and open it to install. Builds are signed with the
-same sideload key, so a new build installs over the old one.
+(the release named "latest") on your phone and open it to install; a copy of the current build is
+also in `release/ewe.apk`. Builds are signed with the same sideload key, so a new build installs
+over the old one.
 
-On first launch enter your project URL and anon/publishable key (Supabase → Project settings →
-API), then create an account. To have them pre-filled, add the repository **variables**
-`EWE_SUPABASE_URL` and `EWE_SUPABASE_ANON_KEY` (Settings → Secrets and variables → Actions → Variables).
-
-Then open Settings in the app, add a provider key and pick a **Notes model** (one that reads images).
+The project URL and publishable key are baked in (`gradle.properties`), so the first screen only
+asks for an email and password. Then open Settings, add a provider key and pick a **Notes model**
+(one that reads images).
 
 ## How it works
 
@@ -91,5 +95,9 @@ Then open Settings in the app, add a provider key and pick a **Notes model** (on
 bash supabase/tests/run_local.sh      # schema tests against a local Postgres
 deno test --allow-net --allow-env supabase/functions/_shared/shared_test.ts
 ```
+
+`LiveSupabaseTest` runs the app's data layer end to end against a real project (sign-in, notes,
+inline placement, linking, rebuild and model switch, search by meaning, revision, recreate). It is
+skipped unless the `EWE_E2E_*` environment variables described in the file are set.
 
 The Inter typeface is bundled under the SIL Open Font License (`app/src/main/INTER-OFL.txt`).
