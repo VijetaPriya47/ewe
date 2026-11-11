@@ -65,6 +65,18 @@ fun AuthScreen(repo: Repository) {
             }
         }
 
+        val context = androidx.compose.ui.platform.LocalContext.current
+        OutlineButton("Continue with Google", Modifier.fillMaxWidth(), enabled = url.isNotBlank() && key.isNotBlank()) {
+            runCatching {
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(repo.googleSignInUrl(url, key))))
+            }.onFailure { toast("No browser found to sign in with.") }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.foundation.layout.Box(Modifier.weight(1f).height(1.dp).background(C.G200))
+            Text("or with email", style = ts(13, 400, C.G500))
+            androidx.compose.foundation.layout.Box(Modifier.weight(1f).height(1.dp).background(C.G200))
+        }
+
         Caps(if (create) "Create account" else "Sign in")
         Field(email, { email = it }, "Email", "you@example.com", KeyboardType.Email)
         Field(password, { password = it }, "Password", "At least 6 characters", KeyboardType.Password, secret = true)

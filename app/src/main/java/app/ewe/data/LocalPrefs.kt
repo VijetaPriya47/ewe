@@ -33,6 +33,11 @@ class LocalPrefs(context: Context) {
         get() = sp.getString("email", null)
         set(v) = sp.edit().putString("email", v).apply()
 
+    /** One-time secret for a Google sign-in that is in progress (PKCE). */
+    var pkceVerifier: String?
+        get() = sp.getString("pkce_verifier", null)
+        set(v) = sp.edit().putString("pkce_verifier", v).apply()
+
     val signedIn get() = !refreshToken.isNullOrEmpty() && !userId.isNullOrEmpty()
 
     fun clearAuth() = sp.edit().remove("access_token").remove("refresh_token").remove("expires_at")

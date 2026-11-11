@@ -38,13 +38,45 @@ class Supabase(private val prefs: LocalPrefs, private val http: OkHttpClient = d
 
     /** Returns true when signed in right away, false when the project wants the email confirmed first. */
     suspend fun signUp(email: String, password: String): Boolean {
-        val res = raw("POST", "/auth/v1/signup", buildJsonObject {
+        val res = raw("POST", "/auth/v1/signup?redirect_to=" + java.net.URLEncoder.encode(REDIRECT, "UTF-8"), buildJsonObject {
             put("email", email); put("password", password)
         }, auth = false).jsonObject
         if (res["access_token"] == null) return false
         storeSession(res)
         return true
     }
+
+    /** The page to open in the browser for "Continue with Google". Comes back to [REDIRECT] with a code. */
+    fun googleSignInUrl(): String {
+        val verifier = ByteArray(48).also { java.security.SecureRandom().nextBytes(it) }.let(::b64url)
+        prefs.pkceVerifier = verifier
+        val challenge = b64url(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
+        return prefs.supabaseUrl + "/auth/v1/authorize?provider=google&redirect_to=" + java.net.URLEncoder.encode(REDIRECT, "UTF-8") +
+            "&code_challenge=$challenge&code_challenge_method=s256"
+    }
+
+    /** Finishes Google sign-in: swaps the one-time code for a session. */
+    suspend fun exchangeCode(code: String) {
+        val verifier = prefs.pkceVerifier ?: throw ApiException("That sign-in link is no longer valid. Please try again.")
+        val res = raw("POST", "/auth/v1/token?grant_type=pkce", buildJsonObject {
+            put("auth_code", code); put("code_verifier", verifier)
+        }, auth = false)
+        prefs.pkceVerifier = null
+        storeSession(res.jsonObject)
+    }
+
+    /** Finishes an email confirmation link, which carries the session itself. */
+    suspend fun adoptSession(accessToken: String, refreshToken: String, expiresIn: Long) {
+        prefs.accessToken = accessToken
+        prefs.refreshToken = refreshToken
+        prefs.expiresAt = System.currentTimeMillis() + expiresIn * 1000
+        val user = raw("GET", "/auth/v1/user", null).jsonObject
+        prefs.userId = user["id"]?.jsonPrimitive?.contentOrNull
+        prefs.email = user["email"]?.jsonPrimitive?.contentOrNull
+        if (prefs.userId == null) { prefs.clearAuth(); throw ApiException("Could not sign in with that link.") }
+    }
+
+    private fun b64url(bytes: ByteArray): String = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
     suspend fun signOut() {
         runCatching { raw("POST", "/auth/v1/logout", JsonObject(emptyMap())) }
@@ -158,6 +190,8 @@ class Supabase(private val prefs: LocalPrefs, private val http: OkHttpClient = d
 
     companion object {
         private const val PAGE = 1000
+        /** Where Supabase sends the browser back to after Google sign-in or an email link. */
+        const val REDIRECT = "ewe://auth-callback"
         val defaultHttp: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
         val slowHttp: OkHttpClient = defaultHttp.newBuilder()

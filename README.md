@@ -47,9 +47,14 @@ the ones already applied, so nothing is run twice.
 Alternative without the integration: add the repository secrets `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_REF` and `SUPABASE_DB_PASSWORD`, then run **Actions → Deploy Supabase**.
 
-New accounts must confirm their email by default. Either open the link in the confirmation email
-(the page it lands on may not load — the account is confirmed anyway), or turn the check off under
-Authentication → Sign In / Providers → Email → "Confirm email".
+**Sign-in settings (dashboard → Authentication):**
+
+- URL Configuration → Redirect URLs → add `ewe://auth-callback`. Email confirmation links and
+  Google sign-in then return to the app instead of `localhost:3000`.
+- Optional: Sign In / Providers → Email → turn off "Confirm email" to skip confirmation emails.
+- Google sign-in: in Google Cloud Console create an OAuth client of type **Web application** with the
+  authorised redirect URI `https://rotvvbjfzfkkggpjuvwd.supabase.co/auth/v1/callback`, then paste its
+  client ID and secret under Sign In / Providers → Google and enable it.
 
 ### 2. The app
 

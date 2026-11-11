@@ -58,6 +58,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     val sync: StateFlow<SyncState> = _sync
     private val _signedIn = MutableStateFlow(prefs.signedIn)
     val signedIn: StateFlow<Boolean> = _signedIn
+    private val _authMessage = MutableStateFlow<String?>(null)
+    /** Result of a sign-in that finished outside the app (browser → back to ewe). */
+    val authMessage: StateFlow<String?> = _authMessage
     private val _uploads = MutableStateFlow<Map<String, Upload>>(emptyMap())
     val uploads: StateFlow<Map<String, Upload>> = _uploads
     private val _rebuild = MutableStateFlow<RebuildProgress?>(null)
@@ -86,7 +89,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         prefs.supabaseUrl = url
         prefs.anonKey = anonKey
         if (create) {
-            if (!api.signUp(email, password)) return "Account created. Open the confirmation email, then sign in."
+            if (!api.signUp(email, password)) return "Account created. Tap the link in the confirmation email — it opens ewe and signs you in."
         } else {
             api.signIn(email, password)
         }
@@ -94,6 +97,42 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         refresh()
         return null
     }
+
+    /** "Continue with Google": the page to open in the browser. */
+    fun googleSignInUrl(url: String, anonKey: String): String {
+        prefs.supabaseUrl = url
+        prefs.anonKey = anonKey
+        return api.googleSignInUrl()
+    }
+
+    /** The browser came back to ewe://auth-callback (Google sign-in or an email link). */
+    fun handleAuthCallback(link: Uri) {
+        scope.launch {
+            try {
+                val fragment = link.encodedFragment.orEmpty().split('&').mapNotNull {
+                    val i = it.indexOf('='); if (i <= 0) null else it.substring(0, i) to Uri.decode(it.substring(i + 1).replace('+', ' '))
+                }.toMap()
+                fun param(name: String) = link.getQueryParameter(name) ?: fragment[name]
+                val code = param("code")
+                val access = param("access_token")
+                val refresh = param("refresh_token")
+                when {
+                    code != null -> api.exchangeCode(code)
+                    access != null && refresh != null -> api.adoptSession(access, refresh, param("expires_in")?.toLongOrNull() ?: 3600)
+                    param("error_code") == "otp_expired" ->
+                        throw ApiException("That email link was already used or has expired. If you tapped it before, your account is confirmed — just sign in.")
+                    else -> throw ApiException(param("error_description") ?: "Sign-in was cancelled.")
+                }
+                _signedIn.value = true
+                _authMessage.value = null
+                refresh()
+            } catch (e: Exception) {
+                _authMessage.value = e.message ?: "Sign-in failed."
+            }
+        }
+    }
+
+    fun clearAuthMessage() { _authMessage.value = null }
 
     suspend fun signOut() {
         api.signOut()

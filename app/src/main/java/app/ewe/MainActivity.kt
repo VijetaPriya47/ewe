@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         pendingOpen.value = intent?.getStringExtra(EXTRA_OPEN)
         val repo = (application as EweApp).repo
+        if (savedInstanceState == null) authLink(intent)
         val store = EpisodeStore.get(this)
 
         setContent {
@@ -72,6 +73,8 @@ class MainActivity : ComponentActivity() {
                     if (signedIn && System.currentTimeMillis() - repo.snapshot.value.syncedAt > 30_000) repo.refreshInBackground()
                     onPauseOrDispose { }
                 }
+                val authMessage by repo.authMessage.collectAsState()
+                LaunchedEffect(authMessage) { authMessage?.let { toast(it); repo.clearAuthMessage() } }
                 val podcastOn = repo.snapshot.collectAsState().value.settings.podcastEnabled
                 LaunchedEffect(signedIn, podcastOn) { PrepareWorker.schedule(applicationContext, repo, androidx.work.ExistingWorkPolicy.KEEP) }
 
@@ -98,6 +101,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.getStringExtra(EXTRA_OPEN)?.let { pendingOpen.value = it }
+        authLink(intent)
+    }
+
+    private fun authLink(intent: Intent?) {
+        val link = intent?.data ?: return
+        if (link.scheme == "ewe" && link.host == "auth-callback") (application as EweApp).repo.handleAuthCallback(link)
     }
 
     companion object {
