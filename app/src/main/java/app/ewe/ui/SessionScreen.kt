@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -171,8 +172,11 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
         if (uris.size > room) toast("Up to $MAX_PHOTOS photos per message.")
         picked.addAll(uris.take(room))
     }
+    // The photo being cropped (its place in the picked list).
+    var cropping by remember { mutableStateOf<Int?>(null) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        cameraUri?.let { if (ok) picked.add(it) }
+        // A new camera photo opens the cropper straight away; Cancel keeps it as taken.
+        cameraUri?.let { if (ok) { picked.add(it); cropping = picked.lastIndex } }
     }
     var attachMenu by remember { mutableStateOf(false) }
     // Where the next message goes: Notes, References only, or Overview only (a summary).
@@ -275,9 +279,14 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             else "Goes to Overview as a diagram — nothing is added to Notes.",
             style = ts(12, 400, C.G500), modifier = Modifier.padding(start = 4.dp))
         if (picked.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(picked.toList()) { uri ->
+            itemsIndexed(picked.toList()) { i, uri ->
                 Box {
-                    AsyncImage(uri, "Selected photo", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp, 80.dp).clip(RoundedCornerShape(10.dp)).background(C.G200))
+                    AsyncImage(uri, "Selected photo", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp, 80.dp).clip(RoundedCornerShape(10.dp))
+                        .background(C.G200).clickable(role = Role.Button) { cropping = i })
+                    Box(Modifier.align(Alignment.BottomStart).padding(3.dp).size(22.dp).clip(CircleShape).background(C.Ink.copy(alpha = 0.75f))
+                        .clickable(role = Role.Button) { cropping = i }.semantics { contentDescription = "Crop photo ${i + 1}" }, contentAlignment = Alignment.Center) {
+                        Icon(Ic.Crop, null, tint = C.White, modifier = Modifier.size(12.dp))
+                    }
                     Box(Modifier.align(Alignment.TopEnd).padding(2.dp).size(22.dp).clip(CircleShape).background(C.Ink).clickable { picked.remove(uri) }, contentAlignment = Alignment.Center) {
                         Icon(Ic.Close, "Remove photo", tint = C.White, modifier = Modifier.size(12.dp))
                     }
@@ -318,6 +327,14 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                 draft = ""; picked.clear(); mode = "notes"
             }
         }
+    }
+    cropping?.let { i ->
+        picked.getOrNull(i)?.let { uri ->
+            CropDialog(uri, onDismiss = { cropping = null }) { cropped ->
+                if (i < picked.size) picked[i] = cropped
+                cropping = null
+            }
+        } ?: run { cropping = null }
     }
     pdf?.let { uri ->
         PdfDialog(uri, onDismiss = { pdf = null }) { info, from, to ->

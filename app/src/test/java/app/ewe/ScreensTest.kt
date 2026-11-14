@@ -10,12 +10,16 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.geometry.Offset
+import app.ewe.ui.CropScreen
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
@@ -215,6 +219,47 @@ class ScreensTest {
         compose.onNodeWithContentDescription("Stop reading").performClick()
         compose.onNodeWithText("Listen to notes").assertExists()
         app.ewe.podcast.NotesReader.get(context).shutdown()
+    }
+
+    private fun testPhoto(): android.net.Uri {
+        // left half red, right half blue, 400×200
+        val bmp = android.graphics.Bitmap.createBitmap(400, 200, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bmp).apply {
+            drawRect(0f, 0f, 200f, 200f, android.graphics.Paint().apply { color = android.graphics.Color.RED })
+            drawRect(200f, 0f, 400f, 200f, android.graphics.Paint().apply { color = android.graphics.Color.BLUE })
+        }
+        val f = File(context.cacheDir, "test_photo.png")
+        f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        return android.net.Uri.fromFile(f)
+    }
+
+    @Test fun cropMathOnRealPixels() {
+        val m = app.ewe.data.CropMath
+        val bmp = app.ewe.data.Images.load(context, testPhoto(), 2048)
+        val right = m.apply(bmp, app.ewe.data.CropRect(0.5f, 0f, 1f, 1f), 0)
+        org.junit.Assert.assertEquals(200, right.width); org.junit.Assert.assertEquals(200, right.height)
+        org.junit.Assert.assertEquals(android.graphics.Color.BLUE, right.getPixel(100, 100))
+        val turned = m.apply(bmp, app.ewe.data.CropRect(), 1)          // 90° clockwise: red ends up on top
+        org.junit.Assert.assertEquals(200, turned.width); org.junit.Assert.assertEquals(400, turned.height)
+        org.junit.Assert.assertEquals(android.graphics.Color.RED, turned.getPixel(100, 50))
+        org.junit.Assert.assertEquals(android.graphics.Color.BLUE, turned.getPixel(100, 350))
+    }
+
+    @Test fun cropScreen() {
+        var result: android.net.Uri? = null
+        var cancelled = false
+        show("10_crop") { CropScreen(testPhoto(), onCancel = { cancelled = true }, onCropped = { result = it }) }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Crop area").fetchSemanticsNodes().isNotEmpty() }
+        // drag the top-left corner to the middle
+        compose.onNodeWithContentDescription("Crop area").performTouchInput {
+            swipe(Offset(3f, 3f), Offset(width / 2f, height / 3f), durationMillis = 400)
+        }
+        shot("10_crop_dragged")
+        compose.onNodeWithText("Done").performClick()
+        compose.waitUntil(5_000) { result != null }
+        val out = android.graphics.BitmapFactory.decodeFile(result!!.path)
+        org.junit.Assert.assertTrue("cropped ${out.width}×${out.height}", out.width in 180..220 && out.height in 120..145)
+        org.junit.Assert.assertFalse(cancelled)
     }
 
     @Test fun referencesAndOverview() {

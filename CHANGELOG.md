@@ -3,9 +3,15 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
-## Planned for 0.5.0
+## 0.5.0 — 2026-11-14
 
-- Crop a photo before it is uploaded.
+### Added
+- **Crop photos before they are sent.** Each picked photo has a small crop button (or tap the
+  thumbnail); a photo you just took with the camera opens the cropper straight away.
+  Drag the corners or edges to resize, drag inside to move, **Rotate** turns it 90°, **Reset** starts
+  over. **Done** replaces the photo in the message with the cropped one; **Cancel** keeps it as it
+  was. Your original photo in the gallery is never changed. Works for notes, Reference and Summary
+  messages alike.
 
 ## 0.4.0 — 2026-11-14
 

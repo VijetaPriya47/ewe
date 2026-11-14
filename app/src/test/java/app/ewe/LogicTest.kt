@@ -125,6 +125,26 @@ class LogicTest {
         assertTrue(app.ewe.podcast.NotesReader.lines(s, "cdn").none { "ref:" in it.text })
     }
 
+    @Test fun `crop handles - which one is touched, and dragging stays inside the photo`() {
+        val m = app.ewe.data.CropMath
+        val full = app.ewe.data.CropRect()
+        val r = app.ewe.data.CropRect(0.2f, 0.2f, 0.8f, 0.8f)
+        assertEquals(app.ewe.data.CropHandle.TL, m.hit(r, 0.21f, 0.19f, 0.05f, 0.05f))
+        assertEquals(app.ewe.data.CropHandle.R, m.hit(r, 0.82f, 0.5f, 0.05f, 0.05f))
+        assertEquals(app.ewe.data.CropHandle.MOVE, m.hit(r, 0.5f, 0.5f, 0.05f, 0.05f))
+        assertEquals(null, m.hit(r, 0.05f, 0.5f, 0.05f, 0.05f))
+        assertEquals(app.ewe.data.CropHandle.BR, m.hit(full, 0.99f, 0.98f, 0.05f, 0.05f))
+        // corners stop at the photo's edge and never make the area smaller than the minimum
+        assertEquals(app.ewe.data.CropRect(0f, 0f, 0.8f, 0.8f), m.drag(r, app.ewe.data.CropHandle.TL, -0.5f, -0.5f))
+        val small = m.drag(r, app.ewe.data.CropHandle.BR, -0.9f, -0.9f)
+        assertEquals(0.2f + m.MIN, small.r, 1e-6f); assertEquals(0.2f + m.MIN, small.b, 1e-6f)
+        assertEquals(app.ewe.data.CropRect(0.2f, 0.1f, 0.8f, 0.8f), m.drag(r, app.ewe.data.CropHandle.T, 0.3f, -0.1f))  // an edge moves one way only
+        // moving keeps the size and stays inside
+        val moved = m.drag(r, app.ewe.data.CropHandle.MOVE, 0.5f, -0.5f)
+        assertEquals(0.4f, moved.l, 1e-5f); assertEquals(0f, moved.t, 1e-5f); assertEquals(1f, moved.r, 1e-5f); assertEquals(0.6f, moved.b, 1e-5f)
+        assertTrue(full.isFull); assertFalse(r.isFull)
+    }
+
     @Test fun `typing reference or summary first picks the mode`() {
         assertEquals("reference", app.ewe.ui.ModeWord.of("Reference: https://web.dev"))
         assertEquals("summary", app.ewe.ui.ModeWord.of("  summary\nmy own notes"))
