@@ -334,4 +334,16 @@ class LogicTest {
         assertEquals(listOf("b", "c", "a"), r.move(listOf("a", "b", "c"), 0, 2))
         assertEquals(listOf("c", "a", "b"), r.move(listOf("a", "b", "c"), 2, 0))
     }
+
+    @Test fun nestingNeverSkipsALevel() {
+        fun pt(level: Int, kind: String = "text") = app.ewe.data.Point(Bullet("x$level$kind", "s", "t", 0.0, "2026-11-14", "o", "m", kind = kind, level = level), 0.0, null)
+        val n = app.ewe.data.Nesting
+        // first point is always top level; each at most one deeper than the one before
+        assertEquals(listOf(0, 1, 2, 2, 0), n.levels(listOf(pt(1), pt(1), pt(2), pt(2), pt(0))))
+        assertEquals(listOf(0, 1, 0, 1), n.levels(listOf(pt(0), pt(2), pt(1, "mermaid"), pt(2))))
+        assertEquals(listOf(0, 0), n.levels(listOf(pt(0), pt(-1))))
+        assertEquals(0, n.maxLevel(listOf(0, 1), 0))
+        assertEquals(2, n.maxLevel(listOf(0, 1, 2), 2))
+        assertEquals(2, n.maxLevel(listOf(0, 2, 2), 2))
+    }
 }

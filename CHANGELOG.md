@@ -3,6 +3,23 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.10.0 — 2026-11-14
+
+### Added
+- **Nested bullets.** Points can sit under other points, up to two levels deep: a main point (●),
+  its sub-points (○) and their sub-points (–), each indented a step further.
+  - The AI nests points where the material has real structure (parts of a definition, steps of a
+    process, examples of a rule, pros and cons). Most points stay at the top level. It sees your
+    existing sub-points too, so new ones can go under the right point.
+  - Tap a point to indent or outdent it with the new buttons. A point can only be one level deeper
+    than the point above it, and diagrams, code, tables and figures are never nested.
+  - Older notes are all top-level until you indent them.
+  - Read-aloud and the podcast read nested points in order, as before.
+
+### Database
+- Migration `20261114220000_ewe_09_nested_bullets.sql`: a `level` column on points (0–2); new
+  notes save the AI's levels (text points only), and recreating a session keeps them.
+
 ## 0.9.0 — 2026-11-14
 
 ### Added

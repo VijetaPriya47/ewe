@@ -193,6 +193,17 @@ begin
   insert into messages (session_id, role, content, mode) values (v_cdn, 'user', 'reference https://x.org', 'reference');
   perform pg_temp.ok(pg_temp.fails(format('insert into messages (session_id, role, content, mode) values (%L, ''user'', ''x'', ''other'')', v_cdn)), 'mode checked');
 
+  -- nested bullets: text points keep their level (0–2), anything else is top level
+  v_res := apply_notes(v_sud, null, '{"sections":[{"section_id":null,"title":"Nested","bullets":[
+    {"kind":"text","text":"Parent","level":0},{"kind":"text","text":"Child","level":1},{"kind":"text","text":"Grandchild","level":2},
+    {"kind":"text","text":"Too deep","level":7},{"kind":"text","text":"Negative","level":-3},{"kind":"text","text":"No level"},
+    {"kind":"text","text":"Junk level","level":"x"},{"kind":"code","text":"x = 1","lang":"py","level":1}]}]}', date '2026-11-14');
+  perform pg_temp.ok((select string_agg(b.content || '=' || b.level, ',' order by b.position) from bullets b join sections s on s.id = b.section_id
+                       where s.session_id = v_sud and s.title = 'Nested')
+                     = 'Parent=0,Child=1,Grandchild=2,Too deep=2,Negative=0,No level=0,Junk level=0,x = 1=0', 'levels saved and clamped');
+  perform pg_temp.ok(pg_temp.fails(format('update bullets set level = 3 where id = %L', v_b1)), 'level at most 2');
+  update bullets set level = 1 where id = v_b1;
+
   -- recreate as project
   v_new := recreate_session(v_cdn);
   perform pg_temp.ok((select type = 'project' and recreated_from = v_cdn from sessions where id = v_new), 'recreated as project');
@@ -205,6 +216,7 @@ begin
                        where s.session_id = v_new and b.content like '%[[ref:' || (select id from session_references where session_id = v_new and number = 1) || ']]%') = 1,
                      'copied note cites the copied reference');
   perform pg_temp.ok((select count(*) from session_summaries where session_id = v_new) = 1, 'summaries copied');
+  perform pg_temp.ok((select count(*) from bullets b join sections s on s.id = b.section_id where s.session_id = v_new and b.level = 1) = 1, 'levels copied');
 
   perform pg_temp.ok((select count(*) from search_notes('edge')) >= 1, 'keyword search');
 end $$;

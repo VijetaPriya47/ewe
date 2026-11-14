@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import app.ewe.data.Message
+import app.ewe.data.Nesting
 import app.ewe.data.Point
 import app.ewe.data.Repository
 import app.ewe.data.Rich
@@ -84,6 +85,20 @@ import java.time.LocalDate
 
 private const val MAX_PHOTOS = 10
 private const val MAX_FIGURES = 6
+/** How far each level of a nested point is indented. */
+private const val NEST_STEP_DP = 22
+
+/** The mark in front of a point: a dot, then a ring for sub-points, then a short dash. */
+@Composable
+private fun BulletMark(level: Int, color: androidx.compose.ui.graphics.Color) {
+    Box(Modifier.padding(top = 8.dp).size(7.dp), contentAlignment = Alignment.Center) {
+        when (level) {
+            0 -> Box(Modifier.fillMaxSize().clip(CircleShape).background(color))
+            1 -> Box(Modifier.fillMaxSize().clip(CircleShape).border(1.5.dp, color, CircleShape))
+            else -> Box(Modifier.size(7.dp, 2.dp).clip(RoundedCornerShape(1.dp)).background(color))
+        }
+    }
+}
 
 @Composable
 fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, onBack: () -> Unit,
@@ -517,7 +532,10 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                         else Modifier)
                     .padding(horizontal = if (now) 6.dp else 0.dp))
             }
-            items(points, key = { section.id + it.bullet.id }) { p ->
+            val levels = Nesting.levels(points)
+            itemsIndexed(points, key = { _, it -> section.id + it.bullet.id }) { idx, p ->
+                val level = levels[idx]
+                val indent = (level * NEST_STEP_DP).dp
                 val key = section.id + p.bullet.id
                 val isSel = selected == key
                 val from = if (p.link != null) snap.sessions.firstOrNull { s -> snap.section(p.bullet.sectionId)?.sessionId == s.id } else null
@@ -538,10 +556,10 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                             else -> NoteTable(Rich.refsToShown(p.bullet.content, snap), onLabel = toggle)
                         }
                     }
-                    else Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else mark ?: if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
+                    else Row(Modifier.fillMaxWidth().padding(start = indent).clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else mark ?: if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
                         .clickable { selected = if (isSel) null else key }.padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.padding(top = 8.dp).size(7.dp).clip(CircleShape).background(if (p.bullet.dateAdded >= weekAgo) C.BlueDot else C.G300))
+                        BulletMark(level, if (p.bullet.dateAdded >= weekAgo) C.BlueDot else C.G300)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             NoteText(p.bullet.content, ts(15, 400, C.Ink, 1.45f).copy(textDecoration = if (p.bullet.important) TextDecoration.Underline else null), snap) { id ->
                                 openRef = if (openRef == key to id) null else key to id
@@ -556,7 +574,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                     openRef?.takeIf { it.first == key }?.let { (_, id) ->
                         RefCard(snap.reference(id), onAll = { openRef = null; onOpenTab(3) }, onClose = { openRef = null })
                     }
-                    if (isSel) Column(Modifier.fillMaxWidth().padding(start = 25.dp, end = 0.dp)) {
+                    if (isSel) Column(Modifier.fillMaxWidth().padding(start = 25.dp + indent, end = 0.dp)) {
                         val origin = when {
                             from != null -> "from ${from.title}"
                             p.bullet.originSessionId == session.id || p.bullet.originSessionId.isEmpty() -> "this session"
@@ -581,6 +599,15 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                                     .copy(textDecoration = TextDecoration.Underline))
                             }
                             Spacer(Modifier.weight(1f))
+                            if (p.bullet.kind == "text") {
+                                IconBtn(Ic.Outdent, "Outdent point", tint = if (level > 0) C.G500 else C.G300, size = 40.dp, iconSize = 18.dp, enabled = level > 0) {
+                                    run.go { repo.setLevel(p.bullet.id, level - 1) }
+                                }
+                                val canIndent = level < Nesting.maxLevel(levels, idx)
+                                IconBtn(Ic.Indent, "Indent point", tint = if (canIndent) C.G500 else C.G300, size = 40.dp, iconSize = 18.dp, enabled = canIndent) {
+                                    run.go { repo.setLevel(p.bullet.id, level + 1) }
+                                }
+                            }
                             IconBtn(Ic.Edit, "Edit point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { editing = p }
                             IconBtn(Ic.Trash, if (p.link != null) "Remove from this topic" else "Delete point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { deleting = p }
                         }

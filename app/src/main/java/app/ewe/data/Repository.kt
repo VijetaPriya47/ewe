@@ -170,7 +170,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             val s = coroutineScope {
                 val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at") }
                 val sections = async { api.selectAll("sections", "id,session_id,title,position,important") }
-                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,caption,position,date_added,origin_session_id,origin_message_id") }
+                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,caption,level,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
                 val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at,mode") }
                 val references = async { api.selectAll("session_references", "id,session_id,number,url,title,description,date_added,origin_message_id") }
@@ -340,6 +340,10 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                 changed.map { (id, pos) -> async { api.update("sections", "id=eq.$id", buildJsonObject { put("position", pos) }) } }.awaitAll()
             }
         } finally { refresh() }
+    }
+
+    suspend fun setLevel(id: String, level: Int) {
+        api.update("bullets", "id=eq.$id", buildJsonObject { put("level", level.coerceIn(0, Nesting.MAX)) }); refresh()
     }
 
     suspend fun editCaption(id: String, caption: String) {

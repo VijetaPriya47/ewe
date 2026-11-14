@@ -52,6 +52,8 @@ object Ic {
     val Image = stroke("M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM4 16l5-5 4 4 2-2 5 5" + circle(15.5f, 8.5f, 1.5f))
     val Grip = stroke("M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01", 3f)
     val Expand = stroke("M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7")
+    val Indent = stroke("M4 6h16M10 12h10M10 18h10M4 10l3 2-3 2")
+    val Outdent = stroke("M4 6h16M10 12h10M10 18h10M7 10l-3 2 3 2")
     val Stop = fill("M7 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z")
     val Play = fill("M8 5l11 7-11 7z")
     val Pause = fill("M7 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM15 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z")

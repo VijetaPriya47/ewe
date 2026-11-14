@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.geometry.Offset
@@ -96,8 +98,8 @@ class ScreensTest {
         fun b(sec: String, text: String, ago: Long, origin: String, pos: Double) = Bullet("b${n++}", sec, text, pos, d(ago), origin, "m1")
         val bullets = listOf(
             b("basics", "CDN = network of servers near users → serves content faster", 2, "cdn", 1.0),
-            b("basics", "Lower latency + less load on origin server", 2, "cdn", 2.0),
-            b("basics", "Static assets (images, JS, CSS) are the usual content", 2, "cdn", 3.0),
+            b("basics", "Lower latency + less load on origin server", 2, "cdn", 2.0).copy(level = 1),
+            b("basics", "Static assets (images, JS, CSS) are the usual content", 2, "cdn", 3.0).copy(level = 2),
             b("edge", "Edge server / PoP = CDN location close to users [[ref:aaaa-0001]]", 9, "cdn", 1.0),
             b("edge", "Request routed to nearest PoP via DNS or Anycast", 0, "cdn", 1.5).copy(important = true),
             b("edge", "Anycast: same IP announced from many PoPs → network picks closest", 0, "cdn", 1.75),
@@ -422,6 +424,20 @@ class ScreensTest {
     @Test fun noLinkedPointsNoButton() {
         show("4_session_notes_no_linked") { SessionScreen(repo(snapshot(configured)), "sud", true, {}, {}, {}) }
         compose.onNodeWithText("Remove linked points").assertDoesNotExist()
+    }
+
+    @Test fun nestedPoints() {
+        show("4_session_notes_nested") { SessionScreen(repo(snapshot(configured)), "cdn", true, {}, {}, {}) }
+        // a sub-point: can go back out, can't go deeper than one level below the point before it
+        compose.onNodeWithText("Lower latency + less load on origin server").performClick()
+        compose.onNodeWithContentDescription("Outdent point").assertIsEnabled()
+        compose.onNodeWithContentDescription("Indent point").assertIsNotEnabled()
+        shot("4_session_notes_nested_selected")
+        compose.onNodeWithText("Lower latency + less load on origin server").performClick()
+        // a main point that is first in its section can't be indented or outdented
+        compose.onNodeWithText("CDN = network of servers near users → serves content faster").performClick()
+        compose.onNodeWithContentDescription("Outdent point").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Indent point").assertIsNotEnabled()
     }
 
     @Test fun options() {

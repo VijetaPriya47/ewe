@@ -103,11 +103,11 @@ serve(async (req, body) => {
   // ───── notes ─────
   // 2. Previous notes of THIS session (context — old photos are never re-sent)
   const rows = must(await db.from("sections")
-    .select("id, title, position, bullets!bullets_section_id_fkey(id, content, kind, position)").eq("session_id", sessionId).order("position")) as
-    { id: string; title: string; bullets: { id: string; content: string; kind: string; position: number }[] }[];
+    .select("id, title, position, bullets!bullets_section_id_fkey(id, content, kind, level, position)").eq("session_id", sessionId).order("position")) as
+    { id: string; title: string; bullets: { id: string; content: string; kind: string; level: number; position: number }[] }[];
   const sections: ExistingSection[] = rows.map((s) => ({
     id: s.id, title: s.title,
-    bullets: [...(s.bullets ?? [])].sort((a, b) => a.position - b.position).map((b) => ({ id: b.id, content: b.content, kind: b.kind })),
+    bullets: [...(s.bullets ?? [])].sort((a, b) => a.position - b.position).map((b) => ({ id: b.id, content: b.content, kind: b.kind, level: b.level })),
   })).filter((s) => s.bullets.length > 0);
   const numbers = new Map(known.map((r) => [r.id, r.number]));
   const { text: previousNotes, refs } = renderPreviousNotes(sections, type === "topic", numbers);

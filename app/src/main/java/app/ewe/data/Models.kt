@@ -53,6 +53,8 @@ data class Bullet(
     val highlight: String? = null,
     /** One line saying what a figure or diagram shows. */
     val caption: String? = null,
+    /** 0 = a main point, 1 = a sub-point of the point before it, 2 = a sub-sub-point. Text only. */
+    val level: Int = 0,
 ) {
     /** A picture cut out of your photo; content is its path in the "figures" storage bucket. */
     val isFigure: Boolean get() = kind == "figure"
@@ -214,6 +216,23 @@ data class Snapshot(
 
 /** One line in the Notes tab. `link` is set when the point lives in another session. */
 data class Point(val bullet: Bullet, val position: Double, val link: BulletLink?)
+
+/** How deep each point of a section is shown: never more than one level below the point before it. */
+object Nesting {
+    const val MAX = 2
+
+    fun levels(points: List<Point>): List<Int> {
+        var prev = -1
+        return points.map { p ->
+            val l = if (p.bullet.kind == "text") p.bullet.level.coerceIn(0, minOf(MAX, prev + 1)) else 0
+            prev = l
+            l
+        }
+    }
+
+    /** The deepest a point at [index] may be indented to. */
+    fun maxLevel(levels: List<Int>, index: Int): Int = if (index <= 0) 0 else minOf(MAX, levels[index - 1] + 1)
+}
 
 enum class ProviderKind(val id: String, val label: String, val hint: String) {
     OPENAI("openai", "OpenAI", "sk-…"),

@@ -7,7 +7,7 @@ import { LINK_ITEM_SCHEMA } from "./links.ts";
 
 export type SessionType = "topic" | "project";
 
-export interface ExistingBullet { id: string; content: string; kind?: string }
+export interface ExistingBullet { id: string; content: string; kind?: string; level?: number }
 export interface ExistingSection { id: string; title: string; bullets: ExistingBullet[] }
 
 export interface RefMaps {
@@ -33,7 +33,8 @@ export function renderPreviousNotes(sections: ExistingSection[], withRefs: boole
         : b.kind === "code" ? `(code block: ${diagramSummary(b.content)})`
         : b.kind === "table" ? `(table: ${diagramSummary(b.content.replace(/\n/g, " ; "))})`
         : b.content.replace(/\[\[ref:([0-9a-fA-F-]+)\]\]/g, (_m: string, id: string) => refNumbers.has(id) ? `[R${refNumbers.get(id)}]` : "");
-      lines.push(withRefs ? `- [${bRef}] ${text}` : `- ${text}`);
+      const indent = "  ".repeat(Math.min(Math.max(b.level ?? 0, 0), 2));  // sub-points indented, as in the app
+      lines.push(withRefs ? `${indent}- [${bRef}] ${text}` : `${indent}- ${text}`);
     });
   });
   return { text: lines.join("\n"), refs };
@@ -104,6 +105,15 @@ const COMMON_RULES = `
 - Set "important": true on the few bullets that matter most: key definitions, core rules, numbers or
   facts to remember, likely exam points. About 1 in 5 bullets at most; all others false.
 - Set a group's "important": true only when the whole sub-topic is central to the material.
+
+# NESTED POINTS
+- "level" nests a bullet under the bullet right before it: 0 = a main point, 1 = a detail, example,
+  step or part of the level-0 point above it, 2 = a detail of the level-1 point above it.
+- A bullet's level is at most one more than the bullet before it; the first bullet of a group is 0
+  unless "insert_after" puts it under an existing point (PREVIOUS NOTES show sub-points indented).
+- Nest only where the material has real structure (parts of a definition, steps of a process,
+  examples of a rule, pros/cons). Most bullets stay at level 0. Never nest just to look tidy.
+- Only text bullets nest: diagrams, code, tables and figures are always level 0.
 
 # LINKS
 - KNOWN LINKS lists links you may cite: [R#] are saved already, [L#] appear in the NEW CONTENT text.
@@ -195,8 +205,9 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
       lang: { type: "string" },
       caption: { type: "string" },
       important: { type: "boolean" },
+      level: { type: "integer" },
     },
-    required: ["kind", "text", "lang", "caption", "important"],
+    required: ["kind", "text", "lang", "caption", "important", "level"],
   };
   const group: Record<string, unknown> = {
     type: "object", additionalProperties: false,
@@ -208,7 +219,7 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
     const bRefs = [...refs.bulletByRef.keys()], sRefs = [...refs.sectionByRef.keys()];
     (bullet.properties as Record<string, unknown>).insert_after =
       bRefs.length <= MAX_ENUM ? { type: "string", enum: ["END", ...bRefs] } : { type: "string" };
-    bullet.required = ["kind", "text", "lang", "caption", "important", "insert_after"];
+    bullet.required = ["kind", "text", "lang", "caption", "important", "level", "insert_after"];
     (group.properties as Record<string, unknown>).target =
       sRefs.length <= MAX_ENUM ? { type: "string", enum: ["NEW", ...sRefs] } : { type: "string" };
     group.required = ["target", "title", "important", "bullets"];
@@ -225,7 +236,7 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
   };
 }
 
-interface ModelBullet { kind?: string; text?: string; lang?: string; caption?: string; important?: boolean; insert_after?: string }
+interface ModelBullet { kind?: string; text?: string; lang?: string; caption?: string; important?: boolean; level?: number; insert_after?: string }
 interface ModelGroup { target?: string; title?: string; important?: boolean; bullets?: ModelBullet[] }
 
 type Kind = "text" | "mermaid" | "code" | "table" | "figure";
@@ -242,6 +253,21 @@ function normalise(b: ModelBullet): { kind: Kind; text: string } {
   }
 }
 
+/**
+ * Levels a model can't get wrong: whole numbers 0–2, only on text, and at most one deeper than the
+ * bullet before. The first bullet may start nested only when it is placed under an existing point.
+ */
+export function nestLevels<T extends { kind: string; level?: number; after_bullet_id?: string | null }>(bullets: T[]): (T & { level?: number })[] {
+  let prev = -1;
+  return bullets.map((b, i) => {
+    const raw = Number.isFinite(b.level) ? Math.trunc(b.level as number) : 0;
+    const ceiling = i === 0 ? (b.after_bullet_id ? 2 : 0) : (prev < 0 ? 0 : prev + 1);
+    const level = b.kind === "text" ? Math.min(Math.max(raw, 0), 2, ceiling) : 0;
+    prev = level;
+    return { ...b, level };
+  });
+}
+
 /** Convert the model's ref-based answer into the payload apply_notes() expects. */
 export function toApplyPayload(sessionType: SessionType, output: { sections?: ModelGroup[] }, refs: RefMaps) {
   return {
@@ -251,7 +277,7 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
         section_id: sectionId,
         title: String(g.title ?? ""),
         important: g.important === true,
-        bullets: (g.bullets ?? [])
+        bullets: nestLevels((g.bullets ?? [])
           .filter((b) => typeof b?.text === "string")
           .map((b) => {
             // only honour anchors that live in the chosen section
@@ -260,11 +286,12 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
             const { kind, text } = normalise(b);
             return {
               kind, text, after_bullet_id: anchor, important: b.important === true,
+              ...(b.level !== undefined ? { level: Number(b.level) as number | undefined } : {}),
               ...(kind === "code" ? { lang: String(b.lang ?? "").trim().toLowerCase() } : {}),
               ...(kind === "figure" || kind === "mermaid" ? { caption: String(b.caption ?? "").trim().slice(0, 200) } : {}),
             };
           })
-          .filter((b) => b.text.trim().length > 0),
+          .filter((b) => b.text.trim().length > 0)),
       };
     }).filter((s) => s.bullets.length > 0),
   };
@@ -403,7 +430,7 @@ export function cleanMindmap(code: string): string {
 }
 
 // ───────────────────────── figures: model keys → storage paths ─────────────────────────
-type PayloadBullet = { kind: string; text: string; after_bullet_id: string | null; important: boolean; caption?: string; lang?: string };
+type PayloadBullet = { kind: string; text: string; after_bullet_id: string | null; important: boolean; caption?: string; lang?: string; level?: number };
 type PayloadGroup = { section_id: string | null; title: string; important: boolean; bullets: PayloadBullet[] };
 
 /**
@@ -424,7 +451,7 @@ export function placeFigures(groups: PayloadGroup[], figures: { key: string; pat
   }
   const left = figures.filter((f) => !used.has(f.key.toUpperCase()));
   if (left.length) {
-    const extra = left.map((f) => ({ kind: "figure", text: f.path, after_bullet_id: null, important: false, caption: "" }));
+    const extra = left.map((f) => ({ kind: "figure", text: f.path, after_bullet_id: null, important: false, caption: "", level: 0 }));
     const last = groups[groups.length - 1];
     if (last) last.bullets.push(...extra);
     else groups.push({ section_id: null, title: "Figures", important: false, bullets: extra });

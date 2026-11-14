@@ -1,6 +1,6 @@
 // deno test --allow-net supabase/functions/_shared/shared_test.ts
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { buildNotesRequest, buildSchema, renderPreviousNotes, summarize, toApplyPayload } from "./notes.ts";
+import { buildNotesRequest, buildSchema, renderPreviousNotes, summarize, toApplyPayload, nestLevels } from "./notes.ts";
 import { buildPlacementRequest, resolvePlacement } from "./placement.ts";
 import { embed, generateJson, type ProviderCfg, ProviderError, toGeminiSchema } from "./providers.ts";
 import { candidates, repairMermaid } from "./mermaid_repair.ts";
@@ -36,7 +36,7 @@ Deno.test("schema only allows real refs", () => {
   const { refs } = renderPreviousNotes(sections, true);
   const s = JSON.stringify(buildSchema("topic", refs));
   assert(s.includes('"enum":["NEW","S1","S2"]') && s.includes('"enum":["END","S1.1","S1.2","S2.1"]'));
-  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid","code","table","figure"]}') && s.includes('"required":["kind","text","lang","caption","important","insert_after"]'));
+  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid","code","table","figure"]}') && s.includes('"required":["kind","text","lang","caption","important","level","insert_after"]'));
   assert(s.includes('"required":["target","title","important","bullets"]'));
 });
 
@@ -49,10 +49,10 @@ Deno.test("model answer → apply payload, bad refs ignored", () => {
   ] }, refs);
   assertEquals(p.sections.length, 2);
   assertEquals(p.sections[0], { section_id: "sec-1", title: "Basics", important: false, bullets: [
-    { kind: "text", text: "a", after_bullet_id: "b-1", important: false }, { kind: "text", text: "b", after_bullet_id: null, important: false }] });
+    { kind: "text", text: "a", after_bullet_id: "b-1", important: false, level: 0 }, { kind: "text", text: "b", after_bullet_id: null, important: false, level: 0 }] });
   assertEquals(p.sections[1].section_id, null);
   const proj = toApplyPayload("project", { sections: [{ target: "S1", title: "T", bullets: [{ text: "x", insert_after: "S1.1" }] }] }, refs);
-  assertEquals(proj.sections[0], { section_id: null, title: "T", important: false, bullets: [{ kind: "text", text: "x", after_bullet_id: null, important: false }] });
+  assertEquals(proj.sections[0], { section_id: null, title: "T", important: false, bullets: [{ kind: "text", text: "x", after_bullet_id: null, important: false, level: 0 }] });
 });
 
 Deno.test("diagrams: fences stripped, empty ones dropped, existing ones summarised", () => {
@@ -190,7 +190,7 @@ Deno.test("figures: keys become paths, extras dropped, unplaced ones kept; capti
     { kind: "figure", text: "F1", caption: "again" },
     { kind: "mermaid", text: "flowchart TD\n  A --> B", caption: "Two steps" },
   ] }] }, refs);
-  assertEquals(p.sections[0].bullets[1], { kind: "figure", text: "F1", after_bullet_id: null, important: false, caption: "Quadtree split into four" });
+  assertEquals(p.sections[0].bullets[1], { kind: "figure", text: "F1", after_bullet_id: null, important: false, caption: "Quadtree split into four", level: 0 });
   assertEquals((p.sections[0].bullets[4] as { caption?: string }).caption, "Two steps");
   assert(!("caption" in p.sections[0].bullets[0]));
   const placed = placeFigures(p.sections as never, [{ key: "F1", path: "u/s/1.jpg" }, { key: "F2", path: "u/s/2.jpg" }]) as
@@ -300,3 +300,22 @@ Deno.test({ name: "provider adapters speak each wire format", sanitizeResources:
   await assertRejects(() => embed(claude, ["a"]), ProviderError, "no embeddings API");
   await server.shutdown();
 } });
+
+Deno.test("nested bullets: levels are cleaned and previous notes show them indented", () => {
+  const lv = (bs: { kind: string; level?: number; after_bullet_id?: string | null }[]) => nestLevels(bs).map((b) => b.level);
+  // first bullet starts at 0; each at most one deeper than the one before; capped at 2
+  assertEquals(lv([{ kind: "text", level: 1 }, { kind: "text", level: 2 }, { kind: "text", level: 2 }, { kind: "text", level: 5 }]), [0, 1, 2, 2]);
+  // only text nests; junk becomes 0; a placed-under-a-point first bullet may start nested
+  assertEquals(lv([{ kind: "text", level: 1, after_bullet_id: "x" }, { kind: "mermaid", level: 1 }, { kind: "text", level: 2 }, { kind: "text", level: NaN }]), [1, 0, 1, 0]);
+  assertEquals(lv([{ kind: "text", level: -2 }, { kind: "text", level: 1.7 }]), [0, 1]);
+
+  const { text } = renderPreviousNotes([{ id: "s", title: "T", bullets: [
+    { id: "a", content: "Parent", level: 0 }, { id: "b", content: "Child", level: 1 }, { id: "c", content: "Grandchild", level: 2 }] }], true);
+  assertEquals(text, "## [S1] T\n- [S1.1] Parent\n  - [S1.2] Child\n    - [S1.3] Grandchild");
+
+  // the payload carries the levels through
+  const out = toApplyPayload("project", { sections: [{ title: "G", important: false, bullets: [
+    { kind: "text", text: "A", lang: "", caption: "", important: false, level: 0 },
+    { kind: "text", text: "a1", lang: "", caption: "", important: false, level: 1 }] }] }, { sectionByRef: new Map(), bulletByRef: new Map() });
+  assertEquals(out.sections[0].bullets.map((b) => b.level), [0, 1]);
+});
