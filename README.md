@@ -64,6 +64,15 @@ your phone to install. A copy of the current build is also in `release/ewe.apk`.
 with the same sideload key and numbered from the version (0.5.0 → 500), so a newer version installs
 over an older one.
 
+**Earlier releases (one-time).** Versions before 0.5.0 have no release yet. GitHub only lets their
+tags be created from a computer, so from a clone of this repository run:
+
+```bash
+git tag v0.1.0 b2c1c22 && git tag v0.2.0 2a0a0c0 && git tag v0.3.0 a8f4621 && git tag v0.4.0 058ab8f && git push origin v0.1.0 v0.2.0 v0.3.0 v0.4.0
+```
+
+then open **Actions → "Add earlier releases" → Run workflow**.
+
 The project URL and publishable key are baked in (`gradle.properties`), so the first screen only
 asks for an email and password. Then open Settings, add a provider key and pick a **Notes model**
 (one that reads images).
