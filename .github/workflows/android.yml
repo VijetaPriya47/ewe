@@ -22,8 +22,6 @@ jobs:
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --tests "app.ewe.LogicTest"
       - name: Build APK
-        env:
-          EWE_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk ewe.apk
       - uses: actions/upload-artifact@v4
         with:

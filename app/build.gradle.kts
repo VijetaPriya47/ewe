@@ -18,8 +18,10 @@ android {
         applicationId = "app.ewe"
         minSdk = 26
         targetSdk = 35
-        versionCode = (cfg("EWE_VERSION_CODE").toIntOrNull() ?: 1)
         versionName = "0.3.1"
+        // Taken from versionName (0.3.1 → 301), so every build of a release, local or GitHub,
+        // has the same number and each new release is higher. Android refuses lower numbers.
+        versionCode = versionName!!.split('.').map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
         buildConfigField("String", "SUPABASE_URL", "\"${cfg("EWE_SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${cfg("EWE_SUPABASE_ANON_KEY")}\"")
     }
