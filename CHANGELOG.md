@@ -3,6 +3,34 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.11.0 — 2026-11-14
+
+### Added
+- **Figures found in PDFs automatically.** When you send a PDF in Notes mode, the notes start right
+  away and, at the same time, an AI looks through the pages for diagrams, charts, drawings and
+  photos. A card in the chat shows what it found as thumbnails with their page numbers:
+  - tap ✕ to remove one that isn't a figure;
+  - tap a thumbnail to fix its cut in the cropper (it opens on the whole page with the found area
+    marked);
+  - **Add figures** places them in the notes made from the PDF, right after the points they
+    illustrate, each with a one-line caption. If the notes are still being made, they are added
+    the moment the notes finish;
+  - **Skip figures** drops them.
+  Pages that couldn't be searched are listed on the card. If nothing is found, no card appears.
+- **Figure-finding model** (Settings › Notes): any model you have a key for, or the notes model
+  (the default). Gemini is particularly good at finding positions on a page.
+- **Find figures in PDFs automatically** can be switched off in Settings › Notes.
+- Up to 10 figures per 10-page part. Cost: each page is sent once more at a small size to look
+  for figures, plus one short request to place the ones you keep.
+
+### Changed
+- While figures are waiting for you in a session, new messages there wait until you add or skip them.
+
+### Database
+- Migration `20261114230000_ewe_10_figures_model.sql`: `figures_provider` / `figures_model` in
+  settings; `apply_notes` can place figures into existing sections of a Project too (used only when
+  adding the figures you kept).
+
 ## 0.10.0 — 2026-11-14
 
 ### Added

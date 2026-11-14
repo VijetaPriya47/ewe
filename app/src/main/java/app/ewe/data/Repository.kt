@@ -82,6 +82,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     val authMessage: StateFlow<String?> = _authMessage
     private val _uploads = MutableStateFlow<Map<String, Upload>>(emptyMap())
     val uploads: StateFlow<Map<String, Upload>> = _uploads
+    private val _reviews = MutableStateFlow<Map<String, FigureReview>>(emptyMap())
+    /** Figures found in a PDF, per session, waiting for you while the notes are made. */
+    val reviews: StateFlow<Map<String, FigureReview>> = _reviews
     private val _rebuild = MutableStateFlow<RebuildProgress?>(null)
     val rebuild: StateFlow<RebuildProgress?> = _rebuild
     private val _mediaVersion = MutableStateFlow(0)
@@ -384,11 +387,14 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
 
     // ───────────── uploads → notes ─────────────
     fun dismissUpload(sessionId: String) {
-        _uploads.value[sessionId]?.pdfDir?.deleteRecursively()
+        val dir = _uploads.value[sessionId]?.pdfDir
         _uploads.update { it - sessionId }
+        if (dir != null && _reviews.value[sessionId]?.dir != dir) dir.deleteRecursively()
+        // figures you already chose go into whatever notes were saved
+        if (_reviews.value[sessionId]?.queued == true) addFiguresNow(sessionId)
     }
 
-    private fun busy(sessionId: String) = _uploads.value[sessionId]?.let { it.error == null } == true
+    private fun busy(sessionId: String) = _uploads.value[sessionId]?.let { it.error == null } == true || _reviews.value[sessionId] != null
 
     /** Runs outside the screen's lifetime, so leaving the chat does not cancel it. */
     fun send(sessionId: String, text: String, images: List<Uri>, mode: String = "notes", figures: List<Uri> = emptyList()) {
@@ -429,8 +435,133 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                 _uploads.update { it + (sessionId to Upload(listOf(placeholder), "", e.message ?: "Could not read the PDF.")) }
                 return@launch
             }
+            // The notes start straight away; figures are looked for at the same time and wait for you.
             run(sessionId, Upload(batches, "Reading…", pdfDir = dir))
+            val cfg = figuresCfg()
+            if (mode == "notes" && prefs.autoFigures && cfg != null) {
+                _reviews.update { it + (sessionId to FigureReview(name, dir, finding = true, stage = "Looking for figures…")) }
+                val (found, note) = findFigures(sessionId, dir, batches, Pdf.chunks(from, to), cfg)
+                if (found.isEmpty() && note == null) endReview(sessionId)
+                else _reviews.update { all -> all[sessionId]?.let { all + (sessionId to it.copy(finding = false, stage = "", candidates = found, note = note)) } ?: all }
+            }
         }
+    }
+
+    /** Asks the figure-finding model where the figures are, part by part, and cuts each one out of its page. */
+    private suspend fun findFigures(sessionId: String, dir: File, batches: List<Batch>, chunks: List<IntRange>,
+                                    cfg: ProviderCfg): Pair<List<FigureCandidate>, String?> {
+        val found = ArrayList<FigureCandidate>()
+        val failed = ArrayList<String>()
+        batches.forEachIndexed { part, batch ->
+            if (_reviews.value[sessionId]?.dir != dir) return found to null      // you skipped it
+            val of = if (batches.size > 1) " (part ${part + 1} of ${batches.size})" else ""
+            _reviews.update { all -> all[sessionId]?.let { all + (sessionId to it.copy(stage = "Looking for figures…$of")) } ?: all }
+            try {
+                val pages = withContext(Dispatchers.Default) {
+                    batch.images.map { Base64.encodeToString(Images.jpeg(Images.load(context, it, FIND_SIDE), 75), Base64.NO_WRAP) }
+                }
+                val res = api.function("find-figures", buildJsonObject {
+                    put("pages", buildJsonArray { pages.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
+                    putProvider("provider", cfg)
+                })
+                withContext(Dispatchers.IO) {
+                    FigureFinder.parse(res, batch.images.size).forEachIndexed { i, box ->
+                        val pageImage = batch.images[box.page - 1]
+                        val rect = FigureFinder.rect(box)
+                        val file = File(dir, "figure_${part}_$i.jpg")
+                        file.writeBytes(Images.jpeg(CropMath.apply(Images.load(context, pageImage, 4096), rect, 0), 92))
+                        found += FigureCandidate("${part}_$i", chunks[part].first + box.page - 1, part, pageImage, rect, Uri.fromFile(file), box.label)
+                    }
+                }
+            } catch (e: Exception) {
+                failed += Pdf.pagesLabel(chunks[part].first, chunks[part].last) + ": " + (e.message ?: "error")
+            }
+        }
+        val note = if (failed.isEmpty()) null else "Couldn't look for figures on " + failed.joinToString("; ")
+        return found to note
+    }
+
+    /** The model that finds figures: its own choice in Settings, else the notes model. */
+    fun figuresCfg(): ProviderCfg? =
+        settings.figuresModel?.let { prefs.cfg(settings.figuresProvider, it) } ?: prefs.cfg(settings.notesProvider, settings.notesModel)
+
+    private fun updateReview(sessionId: String, f: (FigureReview) -> FigureReview) =
+        _reviews.update { all -> all[sessionId]?.let { all + (sessionId to f(it)) } ?: all }
+
+    fun removeFigure(sessionId: String, id: String) = updateReview(sessionId) { r -> r.copy(candidates = r.candidates.filterNot { it.id == id }) }
+
+    /** You fixed a figure's cut in the cropper. */
+    fun replaceFigure(sessionId: String, id: String, crop: Uri) =
+        updateReview(sessionId) { r -> r.copy(candidates = r.candidates.map { if (it.id == id) it.copy(crop = crop) else it }) }
+
+    /** Adds the figures you kept: now if the notes are done, else as soon as they are. */
+    fun addFigures(sessionId: String) {
+        val r = _reviews.value[sessionId]?.takeIf { !it.finding && !it.adding } ?: return
+        if (r.candidates.isEmpty()) { endReview(sessionId); return }
+        if (_uploads.value[sessionId] != null && _uploads.value[sessionId]?.error == null) updateReview(sessionId) { it.copy(queued = true, error = null) }
+        else addFiguresNow(sessionId)
+    }
+
+    fun skipFigures(sessionId: String) = endReview(sessionId)
+
+    private fun endReview(sessionId: String) {
+        val dir = _reviews.value[sessionId]?.dir
+        _reviews.update { it - sessionId }
+        if (dir != null && _uploads.value[sessionId]?.pdfDir != dir) dir.deleteRecursively()
+    }
+
+    /** Stores each kept figure, then asks the notes model to place them in the notes made from the PDF. */
+    private fun addFiguresNow(sessionId: String) {
+        val r = _reviews.value[sessionId] ?: return
+        updateReview(sessionId) { it.copy(queued = false, adding = true, error = null, stage = "Adding figures…") }
+        scope.launch {
+            var left = r.candidates
+            try {
+                val cfg = prefs.cfg(settings.notesProvider, settings.notesModel) ?: throw ApiException("Pick a notes model in Settings first.")
+                while (left.isNotEmpty()) {
+                    val chunk = left.take(10)
+                    val stored = ArrayList<String>()
+                    try {
+                        val parts = chunk.mapIndexed { i, c ->
+                            val (path, small) = storeFigure(sessionId, c.crop)
+                            stored += path
+                            buildJsonObject {
+                                put("key", "F${i + 1}"); put("path", path); put("mime", "image/jpeg"); put("data", small)
+                                put("page", c.page); put("label", c.label)
+                            }
+                        }
+                        api.function("generate-notes", buildJsonObject {
+                            put("session_id", sessionId); put("mode", "figures"); put("text", "Figures from ${r.name}")
+                            put("local_date", today().toString())
+                            put("figures", buildJsonArray { parts.forEach { add(it) } })
+                            putProvider("provider", cfg)
+                        })
+                    } catch (e: Exception) {
+                        stored.forEach { p -> runCatching { api.deleteObject(FIGURES, p) }; figureFile(p).delete() }
+                        throw e
+                    }
+                    left = left.drop(chunk.size)
+                    updateReview(sessionId) { it.copy(candidates = left) }
+                }
+                endReview(sessionId)
+                refresh(); refreshEmbeddingsQuietly()
+            } catch (e: Exception) {
+                updateReview(sessionId) { it.copy(adding = false, stage = "", candidates = left, error = e.message ?: "Could not add the figures.") }
+                runCatching { refresh() }
+            }
+        }
+    }
+
+    /** Uploads one figure to your private folder and keeps a copy on the phone; returns its path and a small copy for the AI. */
+    private suspend fun storeFigure(sessionId: String, uri: Uri): Pair<String, String> {
+        val (stored, small) = withContext(Dispatchers.Default) {
+            val bmp = Images.load(context, uri, FIGURE_MAX_SIDE)
+            Images.jpeg(bmp, 85) to Base64.encodeToString(Images.jpeg(Images.fit(bmp, 1024), 80), Base64.NO_WRAP)
+        }
+        val path = "${prefs.userId}/$sessionId/${java.util.UUID.randomUUID()}.jpg"
+        api.uploadObject(FIGURES, path, stored)
+        withContext(Dispatchers.IO) { figureFile(path).apply { parentFile?.mkdirs() }.writeBytes(stored) }
+        return path to small
     }
 
     private fun run(sessionId: String, start: Upload) {
@@ -449,8 +580,10 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                 }
                 u = u.copy(batches = u.batches.drop(1))
             }
-            u.pdfDir?.deleteRecursively()
             _uploads.update { it - sessionId }
+            // the pages stay while their figures are being reviewed
+            if (_reviews.value[sessionId]?.dir != u.pdfDir) u.pdfDir?.deleteRecursively()
+            if (_reviews.value[sessionId]?.queued == true) addFiguresNow(sessionId)
         }
         scope.launch { job() }
     }
@@ -632,11 +765,13 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
 
     companion object {
         const val FIGURES = "figures"
+        /** Pages are sent at this size to find figures: boxes are relative, so detail is not needed. */
+        const val FIND_SIDE = 1024
         /** Long side a figure is stored at: sharp on a phone, about 100–300 KB. */
         const val FIGURE_MAX_SIDE = 1600
         private const val SETTINGS_COLUMNS = "notes_provider,notes_model,placement_provider,placement_model,podcast_provider,podcast_model," +
             "rag_enabled,rag_selected_model,rag_active_model,podcast_enabled,interval_cap_days,daily_job_time," +
-            "podcast_target_minutes,revisions_per_level,keep_photo_copies"
+            "podcast_target_minutes,revisions_per_level,keep_photo_copies,figures_provider,figures_model"
 
         /** "provider:model" → (provider, model) */
         fun splitModel(key: String?): Pair<String, String>? {

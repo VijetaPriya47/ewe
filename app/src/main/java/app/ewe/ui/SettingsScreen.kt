@@ -53,7 +53,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private enum class Pick { NOTES, EMBEDDING, PLACEMENT, PODCAST }
+private enum class Pick { NOTES, FIGURES, EMBEDDING, PLACEMENT, PODCAST }
 
 @Composable
 fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
@@ -101,6 +101,22 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
             // ───────────── Notes ─────────────
             Group("Notes · always on") {
                 SettingRow("Notes model", null) { SmallButton(modelLabel(s.notesProvider, s.notesModel), caret = true) { picking = Pick.NOTES } }
+                Divider()
+                var autoFigures by remember { mutableStateOf(prefs.autoFigures) }
+                SettingRow("Find figures in PDFs automatically", "Diagrams in a PDF are cut out for you to check while the notes are made") {
+                    Toggle(autoFigures, "Find figures in PDFs automatically") { on -> autoFigures = on; prefs.autoFigures = on }
+                }
+                if (autoFigures) {
+                    Divider()
+                    val own = s.figuresModel != null
+                    SettingRow("Figure-finding model", if (own) null else "Same as the notes model") {
+                        SmallButton(if (own) modelLabel(s.figuresProvider, s.figuresModel) else "Notes model", caret = true) { picking = Pick.FIGURES }
+                    }
+                    if (own) Text("Use notes model instead", style = ts(13, 500, C.Blue), modifier = Modifier.padding(start = 14.dp, bottom = 10.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                            save { put("figures_provider", kotlinx.serialization.json.JsonNull); put("figures_model", kotlinx.serialization.json.JsonNull) }
+                        }.padding(vertical = 6.dp))
+                }
             }
 
             // ───────────── Linking (RAG) ─────────────
@@ -230,6 +246,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
     picking?.let { which ->
         val (title, use, provider, model) = when (which) {
             Pick.NOTES -> Quad("Notes model", ModelUse.CHAT, s.notesProvider, s.notesModel)
+            Pick.FIGURES -> Quad("Figure-finding model", ModelUse.CHAT, s.figuresProvider ?: s.notesProvider, s.figuresModel ?: s.notesModel)
             Pick.PLACEMENT -> Quad("Placement model", ModelUse.CHAT, s.placementProvider, s.placementModel)
             Pick.PODCAST -> Quad("Podcast model", ModelUse.CHAT, s.podcastProvider, s.podcastModel)
             Pick.EMBEDDING -> Repository.splitModel(s.ragSelectedModel).let { Quad("Embedding model", ModelUse.EMBEDDING, it?.first, it?.second) }
@@ -238,6 +255,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
             picking = null
             when (which) {
                 Pick.NOTES -> save { put("notes_provider", p); put("notes_model", m) }
+                Pick.FIGURES -> save { put("figures_provider", p); put("figures_model", m) }
                 Pick.PLACEMENT -> save { put("placement_provider", p); put("placement_model", m) }
                 Pick.PODCAST -> save { put("podcast_provider", p); put("podcast_model", m) }
                 Pick.EMBEDDING -> run.go { repo.setEmbeddingModel(p, m) }

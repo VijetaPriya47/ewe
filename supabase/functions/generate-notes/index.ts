@@ -3,16 +3,18 @@
 // Headers: Authorization: Bearer <user's Supabase access token>  (row-level security applies)
 // Body:
 //   { "session_id": uuid,
-//     "mode"?: "notes" | "reference" | "summary",                  // default "notes"
+//     "mode"?: "notes" | "reference" | "summary" | "figures",      // default "notes"
 //     "text"?: string,
 //     "images"?: [{ "mime": "image/jpeg", "data": "<base64>" }],   // max 10
 //     "figures"?: [{ "key": "F1", "path": "<user>/<session>/<file>.jpg", "mime": "image/jpeg", "data": "<base64>" }],
-//                  // pictures cut out of the pages, already in the "figures" bucket; notes mode only, max 6
+//                  // pictures cut out of the pages, already in the "figures" bucket; notes mode only, max 10 (6 picked by hand; up to 10 found in a PDF part)
 //     "local_date": "YYYY-MM-DD",                                   // the phone's date
 //     "provider": { "kind": "openai"|"anthropic"|"gemini"|"compatible", "api_key": "...",
 //                   "model": "...", "base_url"?: "..." } }
 //
 //   notes      short notes; links in it go to References and are cited as [n]
+//   figures    only "figures" (with "page" and "label"): figures found in a PDF that you kept, placed
+//              into the notes already made; max 10 per call
 //   reference  links only → References; nothing is added to Notes
 //   summary    your own summary or drawn diagram → a diagram in Overview; nothing is added to Notes
 //
@@ -27,15 +29,16 @@ import {
   renderPreviousNotes, type SessionType, summarize, toApplyPayload,
 } from "../_shared/notes.ts";
 import { repairMermaid } from "../_shared/mermaid_repair.ts";
+import { buildPlaceRequest, placePayload } from "../_shared/find_figures.ts";
 import {
   citeRefs, extractUrls, type KnownRef, linksBlock, type ModelLink, refList, refsToSave, type SavedRef,
 } from "../_shared/links.ts";
 
-type Mode = "notes" | "reference" | "summary";
+type Mode = "notes" | "reference" | "summary" | "figures";
 
 serve(async (req, body) => {
   const sessionId = body.session_id as string | undefined;
-  const mode = (["notes", "reference", "summary"].includes(String(body.mode)) ? body.mode : "notes") as Mode;
+  const mode = (["notes", "reference", "summary", "figures"].includes(String(body.mode)) ? body.mode : "notes") as Mode;
   const text = String(body.text ?? "");
   const images = (body.images ?? []) as ImageInput[];
   const localDate = String(body.local_date ?? "");
@@ -46,10 +49,11 @@ serve(async (req, body) => {
   const provider = checkCfg(body.provider, "notes");
   const db = userClient(req);
   const userId = await requireUser(req, db);
-  type Figure = { key: string; path: string; mime: string; data: string };
+  type Figure = { key: string; path: string; mime: string; data: string; page?: number; label?: string };
   const figures = ((body.figures ?? []) as Figure[]).filter((f) =>
     /^F\d+$/i.test(String(f?.key)) && String(f?.path).startsWith(`${userId}/${sessionId}/`) && f?.data);
-  if (figures.length > 6) throw new HttpError("Up to 6 figures per message");
+  if (figures.length > 10) throw new HttpError("Up to 10 figures per message");
+  if (mode === "figures" && figures.length === 0) throw new HttpError("No figures to add");
 
   // 1. The session and its saved references
   const { data: session } = await db.from("sessions").select("id, title, type, is_active").eq("id", sessionId).maybeSingle();
@@ -110,7 +114,28 @@ serve(async (req, body) => {
     bullets: [...(s.bullets ?? [])].sort((a, b) => a.position - b.position).map((b) => ({ id: b.id, content: b.content, kind: b.kind, level: b.level })),
   })).filter((s) => s.bullets.length > 0);
   const numbers = new Map(known.map((r) => [r.id, r.number]));
-  const { text: previousNotes, refs } = renderPreviousNotes(sections, type === "topic", numbers);
+  const { text: previousNotes, refs } = renderPreviousNotes(sections, type === "topic" || mode === "figures", numbers);
+
+  // ───── figures: ones you kept from a PDF, placed into the notes already made from it ─────
+  if (mode === "figures") {
+    const out = await generateJson(provider, buildPlaceRequest({
+      sessionTitle: session.title, previousNotes, refs,
+      figures: figures.map((f) => ({ key: f.key.toUpperCase(), page: Number(f.page) || undefined, label: String(f.label ?? "").slice(0, 120),
+        image: { mime: f.mime || "image/jpeg", data: f.data } })),
+    }));
+    const msg = must(await db.from("messages")
+      .insert({ session_id: sessionId, role: "user", content: text || "Figures", image_count: 0, mode: "notes" })
+      .select("id").single()) as { id: string };
+    const payload = placePayload(out, refs, figures.map((f) => ({ key: f.key, path: f.path, label: String(f.label ?? "") })));
+    const result = must(await db.rpc("apply_notes", {
+      p_session_id: sessionId, p_message_id: msg.id, p_payload: payload, p_today: localDate,
+    })) as { new_figures: number; sections: { title: string; figures?: number }[] };
+    const where = [...new Set(result.sections.filter((x) => (x.figures ?? 0) > 0).map((x) => `**${x.title}**`))];
+    const n = result.new_figures;
+    const summary = `Added ${n === 1 ? "1 figure" : `${n} figures`}${where.length ? ` to ${where.join(", ")}` : ""}.`;
+    must(await db.from("messages").insert({ session_id: sessionId, role: "assistant", content: summary, mode: "notes" }).select("id").single());
+    return { user_message_id: msg.id, summary, new_bullets: n };
+  }
 
   // 3. One AI call
   const output = await generateJson(provider, buildNotesRequest({

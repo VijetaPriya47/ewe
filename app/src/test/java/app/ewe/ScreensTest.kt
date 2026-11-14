@@ -3,6 +3,11 @@ package app.ewe
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import app.ewe.ui.FigureReviewCard
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -438,6 +443,38 @@ class ScreensTest {
         compose.onNodeWithText("CDN = network of servers near users → serves content faster").performClick()
         compose.onNodeWithContentDescription("Outdent point").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Indent point").assertIsNotEnabled()
+    }
+
+    private fun review(vararg state: Pair<String, Any>): app.ewe.data.FigureReview {
+        val page = testPhoto()
+        val c = { id: String, p: Int -> app.ewe.data.FigureCandidate(id, p, 0, page, app.ewe.data.CropRect(0.5f, 0f, 1f, 1f), page, "Chart $id") }
+        return app.ewe.data.FigureReview("networks.pdf", context.cacheDir, candidates = listOf(c("a", 3), c("b", 7), c("c", 12)))
+    }
+
+    @Test fun figureReview() {
+        val removed = ArrayList<String>(); var added = false; var fixed: String? = null
+        show("11_figure_review") {
+            FigureReviewCard(review(), notesRunning = true, onRemove = { removed += it.id }, onFix = { fixed = it.id }, onAdd = { added = true }, onSkip = {})
+        }
+        compose.onNodeWithText("Found 3 figures in networks.pdf").assertExists()
+        compose.onNodeWithText("Notes are being made meanwhile", substring = true).assertExists()
+        compose.onNodeWithContentDescription("Remove figure from page 7").performClick()
+        compose.onNodeWithContentDescription("Chart a").performClick()
+        compose.onNodeWithText("Add 3 figures").performClick()
+        org.junit.Assert.assertEquals(listOf("b"), removed); org.junit.Assert.assertEquals("a", fixed); org.junit.Assert.assertTrue(added)
+    }
+
+    @Test fun figureReviewStates() {
+        show("11_figure_review_queued") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(16.dp)) {
+                FigureReviewCard(app.ewe.data.FigureReview("networks.pdf", context.cacheDir, finding = true, stage = "Looking for figures… (part 2 of 3)"), true, {}, {}, {}, {})
+                FigureReviewCard(review().copy(queued = true), true, {}, {}, {}, {})
+                FigureReviewCard(review().copy(error = "No internet connection.", note = "Couldn't look for figures on pages 21–30: timeout"), false, {}, {}, {}, {})
+            }
+        }
+        compose.onNodeWithText("Looking for figures… (part 2 of 3)").assertExists()
+        compose.onNodeWithText("Will be added as soon as the notes are done.").assertExists()
+        compose.onNodeWithText("Try again").assertExists()
     }
 
     @Test fun options() {

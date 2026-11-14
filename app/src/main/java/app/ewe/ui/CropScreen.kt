@@ -62,20 +62,22 @@ import java.io.File
  * With [onFigure], "Save as figure" keeps the cut-out as a picture for your notes and leaves the photo unchanged.
  */
 @Composable
-fun CropDialog(uri: Uri, onDismiss: () -> Unit, onFigure: ((Uri) -> Unit)? = null, onCropped: (Uri) -> Unit) {
+fun CropDialog(uri: Uri, onDismiss: () -> Unit, onFigure: ((Uri) -> Unit)? = null, initial: CropRect = CropRect(),
+               title: String = "Crop photo", onCropped: (Uri) -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        CropScreen(uri, onDismiss, onFigure, onCropped)
+        CropScreen(uri, onDismiss, onFigure, onCropped, initial, title)
     }
 }
 
 @Composable
-fun CropScreen(uri: Uri, onCancel: () -> Unit, onFigure: ((Uri) -> Unit)? = null, onCropped: (Uri) -> Unit) {
+fun CropScreen(uri: Uri, onCancel: () -> Unit, onFigure: ((Uri) -> Unit)? = null, onCropped: (Uri) -> Unit,
+               initial: CropRect = CropRect(), title: String = "Crop photo") {
     val context = LocalContext.current
     val toast = LocalToast.current
     val scope = rememberCoroutineScope()
     var original by remember(uri) { mutableStateOf<Bitmap?>(null) }
     var turns by remember(uri) { mutableIntStateOf(0) }
-    var rect by remember(uri) { mutableStateOf(CropRect()) }
+    var rect by remember(uri) { mutableStateOf(initial) }
     var saving by remember { mutableStateOf(false) }
 
     LaunchedEffect(uri) {
@@ -104,10 +106,10 @@ fun CropScreen(uri: Uri, onCancel: () -> Unit, onFigure: ((Uri) -> Unit)? = null
     Column(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             BarButton("Cancel", C.G300) { onCancel() }
-            Text("Crop photo", style = ts(16, 600, Color.White), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(title, style = ts(16, 600, Color.White), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             BarButton(if (saving) "Saving…" else "Done", Color.White, bold = true) {
                 if (original == null || saving) return@BarButton
-                if (rect.isFull && turns % 4 == 0) { onCancel(); return@BarButton }
+                if (rect == initial && turns % 4 == 0) { onCancel(); return@BarButton }
                 save("crop", onCropped)
             }
         }

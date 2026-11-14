@@ -26,6 +26,11 @@ class LocalPrefs(context: Context) {
     var expiresAt: Long
         get() = sp.getLong("expires_at", 0)
         set(v) = sp.edit().putLong("expires_at", v).apply()
+    /** Look for diagrams in PDFs and offer them as figures (Settings › Notes). */
+    var autoFigures: Boolean
+        get() = sp.getBoolean("auto_figures", true)
+        set(v) = sp.edit().putBoolean("auto_figures", v).apply()
+
     var userId: String?
         get() = sp.getString("user_id", null)
         set(v) = sp.edit().putString("user_id", v).apply()

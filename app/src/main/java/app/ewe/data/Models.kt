@@ -140,6 +140,9 @@ data class Settings(
     @SerialName("podcast_target_minutes") val podcastTargetMinutes: Int = 30,
     @SerialName("revisions_per_level") val revisionsPerLevel: Int = 2,
     @SerialName("keep_photo_copies") val keepPhotoCopies: Boolean = false,
+    /** Finds figures in PDFs; empty = the notes model. */
+    @SerialName("figures_provider") val figuresProvider: String? = null,
+    @SerialName("figures_model") val figuresModel: String? = null,
 )
 
 @Serializable

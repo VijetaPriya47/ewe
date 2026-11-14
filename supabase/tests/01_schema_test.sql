@@ -204,6 +204,19 @@ begin
   perform pg_temp.ok(pg_temp.fails(format('update bullets set level = 3 where id = %L', v_b1)), 'level at most 2');
   update bullets set level = 1 where id = v_b1;
 
+  -- figures kept from a PDF go into an existing section of a Project only with "into_existing"
+  v_res := apply_notes(v_sud, null, jsonb_build_object('sections', jsonb_build_array(jsonb_build_object(
+    'section_id', (select id from sections where session_id = v_sud and title = 'Nested'), 'title', '', 'bullets',
+    jsonb_build_array(jsonb_build_object('kind', 'text', 'text', 'appended'))))), date '2026-11-14');
+  perform pg_temp.ok((v_res->'sections'->0->>'is_new')::boolean, 'a project normally starts a new section');
+  v_res := apply_notes(v_sud, null, jsonb_build_object('into_existing', true, 'sections', jsonb_build_array(jsonb_build_object(
+    'section_id', (select id from sections where session_id = v_sud and title = 'Nested'), 'title', '', 'bullets',
+    jsonb_build_array(jsonb_build_object('kind', 'text', 'text', 'placed', 'after_bullet_id',
+      (select b.id from bullets b join sections s on s.id = b.section_id where s.session_id = v_sud and b.content = 'Parent')))))), date '2026-11-14');
+  perform pg_temp.ok(not (v_res->'sections'->0->>'is_new')::boolean
+                     and (select string_agg(b.content, ',' order by b.position) from bullets b join sections s on s.id = b.section_id
+                           where s.session_id = v_sud and s.title = 'Nested') like 'Parent,placed,Child%', 'into_existing places inside the section');
+
   -- recreate as project
   v_new := recreate_session(v_cdn);
   perform pg_temp.ok((select type = 'project' and recreated_from = v_cdn from sessions where id = v_new), 'recreated as project');

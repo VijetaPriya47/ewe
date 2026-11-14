@@ -346,4 +346,21 @@ class LogicTest {
         assertEquals(2, n.maxLevel(listOf(0, 1, 2), 2))
         assertEquals(2, n.maxLevel(listOf(0, 2, 2), 2))
     }
+
+    @Test fun figureBoxesFromTheFinder() {
+        val f = app.ewe.data.FigureFinder
+        val res = AppJson.parseToJsonElement("""{"figures":[
+            {"page":2,"top":100,"left":200,"bottom":500,"right":800,"label":"Chart"},
+            {"page":9,"top":0,"left":0,"bottom":10,"right":10,"label":"no such page"},
+            {"page":1,"top":500,"left":0,"bottom":100,"right":10,"label":"upside down"},
+            {"page":1,"top":"x","left":0,"bottom":10,"right":10,"label":"junk"}]}""").jsonObject
+        val boxes = f.parse(res, 3)
+        assertEquals(listOf("Chart"), boxes.map { it.label })
+        val r = f.rect(boxes[0])
+        assertEquals(0.185f, r.l, 1e-4f); assertEquals(0.085f, r.t, 1e-4f); assertEquals(0.815f, r.r, 1e-4f); assertEquals(0.515f, r.b, 1e-4f)
+        // the margin never goes past the page
+        val edge = f.rect(app.ewe.data.FigureFinder.Box(1, 0, 0, 1000, 1000, ""))
+        assertEquals(app.ewe.data.CropRect(0f, 0f, 1f, 1f), edge)
+        assertEquals(emptyList<Any>(), f.parse(AppJson.parseToJsonElement("{}").jsonObject, 3))
+    }
 }

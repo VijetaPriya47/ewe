@@ -319,3 +319,54 @@ Deno.test("nested bullets: levels are cleaned and previous notes show them inden
     { kind: "text", text: "a1", lang: "", caption: "", important: false, level: 1 }] }] }, { sectionByRef: new Map(), bulletByRef: new Map() });
   assertEquals(out.sections[0].bullets.map((b) => b.level), [0, 1]);
 });
+
+Deno.test("find figures: pages are numbered, boxes are cleaned", async () => {
+  const { buildFindRequest, cleanFound } = await import("./find_figures.ts");
+  const req = buildFindRequest([{ mime: "image/jpeg", data: "AAA" }, { mime: "image/jpeg", data: "BBB" }]);
+  assertEquals(req.parts.map((p) => "text" in p ? p.text : "img"), ["PAGE 1", "img", "PAGE 2", "img"]);
+  assert(JSON.stringify(req.schema).includes('"required":["page","top","left","bottom","right","label"]'));
+
+  const out = cleanFound({ figures: [
+    { page: 2, top: 500, left: 100, bottom: 800, right: 900, label: " Second " },
+    { page: 1, top: 600, left: 900, bottom: 100, right: 50, label: "swapped edges" },      // edges swapped back
+    { page: 1, top: -20, left: 0, bottom: 1200, right: 400, label: "clamped" },            // 0–1000
+    { page: 3, top: 0, left: 0, bottom: 500, right: 500, label: "no such page" },
+    { page: 1, top: 10, left: 10, bottom: 30, right: 900, label: "sliver" },
+    { page: 1, top: 0, left: 0, bottom: 1000, right: 1000, label: "whole page" },
+    { page: 2, top: 510, left: 110, bottom: 790, right: 890, label: "inside the first" },  // duplicate
+    { page: 1, top: "x", left: 0, bottom: 10, right: 10, label: "junk" },
+  ] }, 2);
+  assertEquals(out.map((f) => [f.page, f.top, f.left, f.bottom, f.right, f.label]), [
+    [1, 0, 0, 1000, 400, "clamped"],
+    [1, 100, 50, 600, 900, "swapped edges"],
+    [2, 500, 100, 800, 900, "Second"],
+  ]);
+  assertEquals(cleanFound(null, 3), []);
+  const many = { figures: Array.from({ length: 14 }, (_, i) => ({ page: 1, top: i * 70, left: 0, bottom: i * 70 + 60, right: 500, label: "" })) };
+  assertEquals(cleanFound(many, 1).length, 10);
+});
+
+Deno.test("place reviewed figures into existing notes", async () => {
+  const { buildPlaceRequest, placePayload } = await import("./find_figures.ts");
+  const { refs } = renderPreviousNotes(sections, true);
+  const req = buildPlaceRequest({ sessionTitle: "CDN", previousNotes: "x", refs,
+    figures: [{ key: "F1", page: 3, label: "map", image: { mime: "image/jpeg", data: "A" } }, { key: "F2", image: { mime: "image/jpeg", data: "B" } }] });
+  const schema = JSON.stringify(req.schema);
+  assert(schema.includes('"figure":{"type":"string","enum":["F1","F2"]}') && schema.includes('"enum":["NEW","S1","S2"]'));
+  assert(req.parts.some((p) => "text" in p && p.text === "[F1] from page 3 — looks like: map"));
+
+  const figs = [{ key: "F1", path: "u/s/1.jpg", label: "map" }, { key: "F2", path: "u/s/2.jpg" }, { key: "F3", path: "u/s/3.jpg", label: "chart" }];
+  const p = placePayload({ places: [
+    { figure: "F1", target: "S1", insert_after: "S1.2", caption: "PoP map" },
+    { figure: "F1", target: "S2", insert_after: "END", caption: "repeat" },          // a figure only once
+    { figure: "F2", target: "S2", insert_after: "S1.1", caption: "" },               // anchor in another section: end
+    { figure: "F9", target: "S1", insert_after: "END", caption: "unknown" },
+  ] }, refs, figs);
+  assertEquals(p.into_existing, true);
+  assertEquals(p.sections.map((g) => [g.section_id, g.title, (g.bullets as { text: string; after_bullet_id: string | null; caption: string }[])
+    .map((b) => [b.text, b.after_bullet_id, b.caption])]), [
+    ["sec-1", "", [["u/s/1.jpg", "b-2", "PoP map"]]],
+    ["sec-2", "", [["u/s/2.jpg", null, ""]]],
+    [null, "Figures", [["u/s/3.jpg", null, "chart"]]],                              // the one not placed still goes in
+  ]);
+});

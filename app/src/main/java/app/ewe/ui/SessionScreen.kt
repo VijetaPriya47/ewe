@@ -180,6 +180,9 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
     val uploads by repo.uploads.collectAsState()
     val mediaVersion by repo.mediaVersion.collectAsState()
     val upload = uploads[session.id]
+    val reviews by repo.reviews.collectAsState()
+    val review = reviews[session.id]
+    var fixingFigure by remember { mutableStateOf<app.ewe.data.FigureCandidate?>(null) }
     var draft by rememberSaveable(session.id) { mutableStateOf("") }
     val picked = remember(session.id) { mutableStateListOf<Uri>() }
     val figures = remember(session.id) { mutableStateListOf<Uri>() }
@@ -272,6 +275,11 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                 }
             }
         }
+        if (review != null) item(key = "figure-review") {
+            FigureReviewCard(review, notesRunning = upload != null && upload.error == null,
+                onRemove = { repo.removeFigure(session.id, it.id) }, onFix = { fixingFigure = it },
+                onAdd = { repo.addFigures(session.id) }, onSkip = { repo.skipFigures(session.id) })
+        }
     }
 
     // ── composer ──
@@ -329,7 +337,7 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                 }
             }
         }
-        val busy = upload != null && upload.error == null
+        val busy = (upload != null && upload.error == null) || review != null
         val canSend = !busy && notesModelSet && (draft.isNotBlank() || picked.isNotEmpty() || (mode == "notes" && figures.isNotEmpty()))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).border(1.dp, C.G300, RoundedCornerShape(24.dp)).padding(6.dp), verticalAlignment = Alignment.Bottom) {
             Box {
@@ -375,8 +383,14 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             }
         } ?: run { cropping = null }
     }
+    fixingFigure?.let { c ->
+        CropDialog(c.pageImage, onDismiss = { fixingFigure = null }, initial = c.rect, title = "Figure · page ${c.page}") { uri ->
+            repo.replaceFigure(session.id, c.id, uri)
+            fixingFigure = null
+        }
+    }
     pdf?.let { uri ->
-        PdfDialog(uri, onDismiss = { pdf = null }) { info, from, to ->
+        PdfDialog(uri, onDismiss = { pdf = null }, autoFigures = mode == "notes" && repo.prefs.autoFigures && repo.figuresCfg() != null) { info, from, to ->
             pdf = null
             repo.sendPdf(session.id, uri, info.name, from, to, ModeWord.strip(draft, mode).trim(), mode)
             draft = ""; mode = "notes"
@@ -688,7 +702,7 @@ private fun ReaderBar(reader: NotesReader, state: ReaderState) {
 
 /** Pick which pages of a PDF become notes. They are sent 10 pages per message. */
 @Composable
-private fun PdfDialog(uri: Uri, onDismiss: () -> Unit, onSend: (Pdf.Info, Int, Int) -> Unit) {
+private fun PdfDialog(uri: Uri, onDismiss: () -> Unit, autoFigures: Boolean = false, onSend: (Pdf.Info, Int, Int) -> Unit) {
     val context = LocalContext.current
     var info by remember { mutableStateOf<Pdf.Info?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -730,7 +744,9 @@ private fun PdfDialog(uri: Uri, onDismiss: () -> Unit, onSend: (Pdf.Info, Int, I
                         Text(problem ?: if (count <= Pdf.PAGES_PER_MESSAGE) "Sent as one message."
                             else "Sent as ${(count + Pdf.PAGES_PER_MESSAGE - 1) / Pdf.PAGES_PER_MESSAGE} messages of up to ${Pdf.PAGES_PER_MESSAGE} pages, one after another.",
                             style = ts(13, 400, if (problem != null) C.Red else C.G600, 1.45f))
-                        Text("Pages are turned into images on this phone and read by your notes model.", style = ts(12, 400, C.G500, 1.4f))
+                        Text("Pages are turned into images on this phone and read by your notes model." +
+                            if (autoFigures) " Figures are looked for at the same time, for you to check while the notes are made." else "",
+                            style = ts(12, 400, C.G500, 1.4f))
                     }
                 }
             }
