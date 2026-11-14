@@ -439,9 +439,12 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     var openRef by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deleting by remember { mutableStateOf<Point?>(null) }
     var reordering by remember { mutableStateOf(false) }
+    var removingLinked by remember { mutableStateOf(false) }
     val today = repo.today()
     val weekAgo = today.minusDays(7).toString()
     val total = sections.sumOf { it.second.size }
+    // points brought in from other sessions (they live there; here they are only links)
+    val linkedCount = sections.sumOf { (_, pts) -> pts.count { it.link != null } }
 
     if (total == 0) {
         Column(Modifier.fillMaxWidth().weight(1f).padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -468,9 +471,9 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     }
 
     LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { androidx.compose.foundation.layout.FlowRow(Modifier.padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (spoken.isNotEmpty() && reading == null) Row(
-                Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
+                Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
                     .clickable(role = Role.Button) { reader.play(session.id, session.title, spoken) }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.Speaker, null, tint = C.Ink, modifier = Modifier.size(18.dp))
@@ -478,11 +481,19 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                 Text("~${NotesReader.minutes(spoken)} min", style = ts(13, 400, C.G500))
             }
             if (sections.size > 1 && reading == null) Row(
-                Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
+                Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
                     .clickable(role = Role.Button) { reordering = true }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.Grip, null, tint = C.Ink, modifier = Modifier.size(18.dp))
                 Text("Reorder", style = ts(14, 600))
+            }
+            if (linkedCount > 0 && reading == null) Row(
+                Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
+                    .clickable(role = Role.Button) { removingLinked = true }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.Link, null, tint = C.Purple, modifier = Modifier.size(16.dp))
+                Text("Remove linked points", style = ts(14, 600))
+                Text("$linkedCount", style = ts(13, 400, C.G500))
             }
         } }
         item {
@@ -598,6 +609,12 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
             val own = snap.section(p.bullet.sectionId)?.sessionId.orEmpty()
             run.go { repo.editBullet(p.bullet.id, if (p.bullet.isCode || p.bullet.isDiagram) text else Rich.shownToRefs(text, snap.referencesOf(own))) }
         }
+    }
+    if (removingLinked) Confirm("Remove ${plural(linkedCount, "linked point")}?",
+        "Every point brought in from other sessions is taken out of ${session.title}. They stay in the sessions they came from. " +
+            "Sections left empty are removed.", "Remove", danger = true, onDismiss = { removingLinked = false }) {
+        removingLinked = false; selected = null
+        run.go { repo.removeLinkedPoints(session.id) }
     }
     if (reordering) ReorderSectionsDialog(sections.map { it.first }, onDismiss = { reordering = false }) { ids ->
         reordering = false

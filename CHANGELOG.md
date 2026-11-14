@@ -3,6 +3,15 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.9.0 — 2026-11-14
+
+### Added
+- **Remove linked points.** A topic's Notes tab has a **Remove linked points** button, with the
+  count, when the topic holds points brought in from other sessions. After you confirm, all of
+  them are taken out of this topic at once. They stay in the sessions they came from, and sections
+  left empty are removed. Linking only brings in points from new notes, so removed ones don't come
+  back. (One point can still be removed on its own: tap it, then the bin.)
+
 ## 0.8.0 — 2026-11-14
 
 ### Added

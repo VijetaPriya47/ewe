@@ -410,6 +410,20 @@ class ScreensTest {
         compose.onNodeWithText("Drag to move around · pinch to zoom").assertExists()
     }
 
+    @Test fun removeLinkedPoints() {
+        show("4_session_notes_remove_linked") { SessionScreen(repo(snapshot(configured)), "cdn", true, {}, {}, {}) }
+        compose.onNodeWithText("Remove linked points").performClick()
+        compose.onNodeWithText("Remove 1 linked point?").assertExists()
+        compose.onNodeWithText("stay in the sessions they came from", substring = true).assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Remove 1 linked point?").assertDoesNotExist()
+    }
+
+    @Test fun noLinkedPointsNoButton() {
+        show("4_session_notes_no_linked") { SessionScreen(repo(snapshot(configured)), "sud", true, {}, {}, {}) }
+        compose.onNodeWithText("Remove linked points").assertDoesNotExist()
+    }
+
     @Test fun options() {
         val r = repo(snapshot(configured))
         show("6_session_options") { SessionScreen(r, "cdn", false, {}, {}, {}) }

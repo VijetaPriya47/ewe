@@ -366,6 +366,14 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     }
 
     /** Removes a linked point from a Topic; the point itself stays in its own session. */
+    /** Takes every point linked in from other sessions out of [sessionId]; the points stay where they came from. */
+    suspend fun removeLinkedPoints(sessionId: String) {
+        val sectionIds = _snapshot.value.sectionsOf(sessionId).map { it.id }
+        if (sectionIds.isEmpty()) return
+        sectionIds.chunked(50).forEach { ids -> api.delete("bullet_links", "section_id=in.(${ids.joinToString(",")})") }
+        refresh(); refreshEmbeddingsQuietly()
+    }
+
     suspend fun unlink(linkId: String) {
         api.delete("bullet_links", "id=eq.$linkId"); refresh(); refreshEmbeddingsQuietly()
     }
