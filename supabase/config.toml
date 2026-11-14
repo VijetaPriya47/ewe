@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.fix-diagram]
 verify_jwt = false
+
+[functions.make-overview]
+verify_jwt = false

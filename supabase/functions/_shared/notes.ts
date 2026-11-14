@@ -3,6 +3,7 @@
 
 import type { ImageInput, JsonRequest, Part } from "./providers.ts";
 import { repairMermaid } from "./mermaid_repair.ts";
+import { LINK_ITEM_SCHEMA } from "./links.ts";
 
 export type SessionType = "topic" | "project";
 
@@ -16,7 +17,7 @@ export interface RefMaps {
 
 /** Render existing notes compactly. Topics get short refs (S1, S1.2) so the AI can
  *  point at a place; projects don't need them (notes are only appended). */
-export function renderPreviousNotes(sections: ExistingSection[], withRefs: boolean): { text: string; refs: RefMaps } {
+export function renderPreviousNotes(sections: ExistingSection[], withRefs: boolean, refNumbers: Map<string, number> = new Map()): { text: string; refs: RefMaps } {
   const refs: RefMaps = { sectionByRef: new Map(), bulletByRef: new Map() };
   if (sections.length === 0) return { text: "(none yet — this is the first upload)", refs };
 
@@ -31,7 +32,7 @@ export function renderPreviousNotes(sections: ExistingSection[], withRefs: boole
       const text = b.kind === "mermaid" ? `(diagram already drawn: ${diagramSummary(b.content)})`
         : b.kind === "code" ? `(code block: ${diagramSummary(b.content)})`
         : b.kind === "table" ? `(table: ${diagramSummary(b.content.replace(/\n/g, " ; "))})`
-        : b.content;
+        : b.content.replace(/\[\[ref:([0-9a-fA-F-]+)\]\]/g, (_m: string, id: string) => refNumbers.has(id) ? `[R${refNumbers.get(id)}]` : "");
       lines.push(withRefs ? `- [${bRef}] ${text}` : `- ${text}`);
     });
   });
@@ -97,6 +98,15 @@ const COMMON_RULES = `
   facts to remember, likely exam points. About 1 in 5 bullets at most; all others false.
 - Set a group's "important": true only when the whole sub-topic is central to the material.
 
+# LINKS
+- KNOWN LINKS lists links you may cite: [R#] are saved already, [L#] appear in the NEW CONTENT text.
+- When a bullet's point comes from a link or mentions it, end that bullet with its marker, e.g. "… [L1]".
+  Several are fine: "… [R2][L1]". Never write a URL inside a bullet: use the marker.
+- Links printed in the images (and not in KNOWN LINKS): add each to "links" with key "P1", "P2", …
+  and the URL exactly as printed; cite it with its marker the same way.
+- In "links", give every [L#] and [P#] link a short "title" (at most 8 words) and a one-line
+  "description" of what it is about. Leave [R#] links out. "url" is "" for [L#] links.
+
 # DIAGRAMS (optional — most uploads need none)
 - Add a diagram only when the NEW CONTENT shows a figure, or describes a process, flow, sequence,
   hierarchy, state change or relationships that are much clearer as a picture.
@@ -139,6 +149,7 @@ export function buildNotesRequest(opts: {
   refs: RefMaps;
   newText: string;
   images: ImageInput[];
+  links?: string;
 }): JsonRequest {
   const system = [COMMON_RULES, opts.sessionType === "topic" ? TOPIC_RULES : PROJECT_RULES].join("\n\n");
 
@@ -154,7 +165,7 @@ ${opts.images.length ? `[${opts.images.length} image(s) attached below]\n` : ""}
 
   const parts: Part[] = [{ text: header }];
   for (const image of opts.images) parts.push({ image });
-  parts.push({ text: "=== END OF NEW CONTENT ===" });
+  parts.push({ text: "=== END OF NEW CONTENT ===\n\n" + (opts.links ?? "=== KNOWN LINKS ===\n(none)\n=== END OF KNOWN LINKS ===") });
 
   return { system, parts, schema: buildSchema(opts.sessionType, opts.refs), schemaName: "notes" };
 }
@@ -190,8 +201,12 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
 
   return {
     type: "object", additionalProperties: false,
-    properties: { sections: { type: "array", items: group }, skipped_duplicates: { type: "integer" } },
-    required: ["sections", "skipped_duplicates"],
+    properties: {
+      sections: { type: "array", items: group },
+      skipped_duplicates: { type: "integer" },
+      links: { type: "array", items: LINK_ITEM_SCHEMA },
+    },
+    required: ["sections", "skipped_duplicates", "links"],
   };
 }
 
@@ -277,4 +292,94 @@ export function summarize(
     line = `Added ${what}: ${bits.join(", ")}.`;
   }
   return line + skippedLine;
+}
+
+// ───────────────────────── Reference mode: save links, make no notes ─────────────────────────
+const REFERENCE_RULES = `
+# YOUR JOB
+- The user is saving REFERENCE LINKS for a study session. Do NOT make notes.
+- List every link in the NEW CONTENT in "links":
+  - links from the text: key "L1", "L2", … as in KNOWN LINKS, with "url": "".
+  - links printed in the images: key "P1", "P2", … with the URL exactly as printed.
+- For each, a short "title" (at most 8 words) and a one-line "description" of what it is about,
+  taken from what the NEW CONTENT says about it, or what the link plainly is.
+- Do not list [R#] links (already saved). Do not invent links.
+`.trim();
+
+export function buildReferenceRequest(opts: { sessionTitle: string; newText: string; images: ImageInput[]; links: string }): JsonRequest {
+  const parts: Part[] = [{ text: `SESSION: "${opts.sessionTitle}"\n\n=== NEW CONTENT ===\n${opts.newText.trim() || "(no text)"}` }];
+  for (const image of opts.images) parts.push({ image });
+  parts.push({ text: "=== END OF NEW CONTENT ===\n\n" + opts.links });
+  return {
+    system: REFERENCE_RULES, parts, schemaName: "references",
+    schema: { type: "object", additionalProperties: false, properties: { links: { type: "array", items: LINK_ITEM_SCHEMA } }, required: ["links"] },
+  };
+}
+
+// ───────────────────────── Summary mode: your own summary → Overview ─────────────────────────
+const SUMMARY_RULES = `
+# YOUR JOB
+- The user is adding their OWN SUMMARY of a study session: text, or a photo of a summary or of a
+  diagram they drew. Do NOT make notes.
+- Turn it into ONE Mermaid diagram that shows its structure:
+  - a drawn diagram: copy its boxes and arrows as a flowchart;
+  - a process or steps: a flowchart;
+  - a list or outline of topics: a mindmap.
+- Use the user's own words for labels, kept short. Do not add anything that is not in it.
+- At most 25 nodes. ONE STATEMENT PER LINE (real line breaks, \\n in the JSON string).
+  Flowchart labels in double quotes: A["Fetch IDs (parallel)"], A -->|"miss"| B.
+  Mindmap: "mindmap", then "  root((Title))", children indented 2 more spaces than their parent,
+  plain words only (no brackets, parentheses or quotes in names).
+- "title": a few words naming the summary. "note": its key text in at most 80 words, or "" if it was only a diagram.
+`.trim();
+
+export function buildSummaryRequest(opts: { sessionTitle: string; newText: string; images: ImageInput[] }): JsonRequest {
+  const parts: Part[] = [{ text: `SESSION: "${opts.sessionTitle}"\n\n=== THE USER'S SUMMARY ===\n${opts.newText.trim() || "(see the images)"}` }];
+  for (const image of opts.images) parts.push({ image });
+  parts.push({ text: "=== END ===" });
+  return {
+    system: SUMMARY_RULES, parts, schemaName: "summary",
+    schema: {
+      type: "object", additionalProperties: false,
+      properties: { title: { type: "string" }, mermaid: { type: "string" }, note: { type: "string" } },
+      required: ["title", "mermaid", "note"],
+    },
+  };
+}
+
+// ───────────────────────── AI overview: names only, for recall ─────────────────────────
+const OVERVIEW_RULES = `
+# YOUR JOB
+- Make a RECALL MAP of a study session: a Mermaid mindmap with ONLY names — the session, its
+  sections, and under each section 2 to 4 key sub-topic names (2 to 4 words each).
+- No definitions, numbers, explanations or examples: the user will try to recall those.
+- Format exactly:
+  mindmap
+    root((Session title))
+      Section name
+        Sub-topic
+- One name per line, children indented 2 more spaces than their parent. Plain words only:
+  no brackets, parentheses, quotes or colons in names.
+`.trim();
+
+export function buildOverviewRequest(opts: { sessionTitle: string; notes: string }): JsonRequest {
+  return {
+    system: OVERVIEW_RULES,
+    parts: [{ text: `SESSION: "${opts.sessionTitle}"\n\n=== NOTES ===\n${opts.notes}\n=== END ===` }],
+    schemaName: "overview",
+    schema: { type: "object", additionalProperties: false, properties: { mermaid: { type: "string" } }, required: ["mermaid"] },
+  };
+}
+
+/** Mindmap names cannot hold brackets or quotes (they mean shapes); strip them, keep the root's (( )). */
+export function cleanMindmap(code: string): string {
+  const lines = cleanMermaid(code).split("\n");
+  if (!/^\s*mindmap\s*$/i.test(lines[0] ?? "")) return code;
+  return lines.map((line, i) => {
+    if (i === 0) return "mindmap";
+    const m = line.match(/^(\s*)(root\(\()(.*)(\)\))\s*$/);
+    if (m) return m[1] + m[2] + m[3].replace(/[()\[\]{}"]/g, "").trim() + m[4];
+    const indent = line.match(/^\s*/)![0];
+    return indent + line.trim().replace(/[()\[\]{}"`:]/g, "").replace(/\s{2,}/g, " ");
+  }).filter((l) => l.trim().length > 0).join("\n");
 }

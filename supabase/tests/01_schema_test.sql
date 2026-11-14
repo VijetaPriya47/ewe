@@ -151,12 +151,43 @@ begin
   delete from bullets where id = v_sb;
   perform pg_temp.ok(not exists (select 1 from bullet_links) and not exists (select 1 from sections where session_id = v_sud), 'cascade + prune');
 
+  -- references: one per link, stable numbers, tidy comparison
+  perform pg_temp.ok(ref_url_key('HTTPS://WWW.Example.com:443/Docs/Page/?utm_source=x&id=5#top') = 'example.com/Docs/Page?id=5', 'url key: ' || ref_url_key('HTTPS://WWW.Example.com:443/Docs/Page/?utm_source=x&id=5#top'));
+  perform pg_temp.ok(ref_url_key('http://example.com/') = 'example.com', 'url key root');
+  v_res := upsert_references(v_cdn, v_msg, '[{"key":"L1","url":"https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching","title":"MDN — HTTP caching","description":"TTL and validation"},
+     {"key":"L2","url":"https://web.dev/articles/http-cache?utm_medium=email"},
+     {"key":"L3","url":"https://WWW.web.dev/articles/http-cache/"},
+     {"key":"bad","url":"javascript:alert(1)"}]', date '2026-11-14');
+  perform pg_temp.ok(jsonb_array_length(v_res) = 3, 'bad url skipped: ' || v_res::text);
+  perform pg_temp.ok((v_res->0->>'number')::int = 1 and (v_res->1->>'number')::int = 2 and (v_res->2->>'number')::int = 2
+                     and (v_res->2->>'is_new')::boolean = false, 'same link kept once: ' || v_res::text);
+  perform pg_temp.ok((select title from session_references where number = 2 and session_id = v_cdn) = 'web.dev', 'title falls back to the site');
+  v_res := upsert_references(v_cdn, v_msg, '[{"key":"P1","url":"https://web.dev/articles/http-cache","title":"web.dev — HTTP cache","description":"Cache headers"}]', date '2026-11-14');
+  perform pg_temp.ok((select title = 'web.dev — HTTP cache' and description = 'Cache headers' from session_references where number = 2 and session_id = v_cdn), 'empty title/description filled later');
+  update session_references set number = 99, url = 'https://web.dev/articles/http-cache-2' where number = 2 and session_id = v_cdn;
+  perform pg_temp.ok((select url_key from session_references where number = 2 and session_id = v_cdn) = 'web.dev/articles/http-cache-2', 'number never changes; key follows the url');
+  perform pg_temp.ok(pg_temp.fails(format('insert into session_references (session_id, url) values (%L, ''https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching/'')', v_cdn)), 'duplicate link refused');
+  perform pg_temp.ok(pg_temp.fails(format('insert into session_references (session_id, url) values (%L, ''ftp://x'')', v_cdn)), 'only web links');
+  -- a note citing reference 1
+  update bullets set content = content || ' [[ref:' || (select id from session_references where number = 1 and session_id = v_cdn) || ']]'
+   where id = v_b1;
+  perform pg_temp.ok(section_embed_text(v_basics) not like '%[[ref:%', 'embeddings ignore ref marks');
+  insert into session_summaries (session_id, kind, title, mermaid) values (v_cdn, 'upload', 'Mine', 'flowchart TD\n  A --> B');
+  insert into messages (session_id, role, content, mode) values (v_cdn, 'user', 'reference https://x.org', 'reference');
+  perform pg_temp.ok(pg_temp.fails(format('insert into messages (session_id, role, content, mode) values (%L, ''user'', ''x'', ''other'')', v_cdn)), 'mode checked');
+
   -- recreate as project
   v_new := recreate_session(v_cdn);
   perform pg_temp.ok((select type = 'project' and recreated_from = v_cdn from sessions where id = v_new), 'recreated as project');
   perform pg_temp.ok((select not is_active from sessions where id = v_cdn), 'old one inactive');
   perform pg_temp.ok((select count(*) from bullets b join sections s on s.id = b.section_id where s.session_id = v_new) = 7, 'notes copied');
   perform pg_temp.ok((select min(date_added) from bullets b join sections s on s.id = b.section_id where s.session_id = v_new) = '2026-11-08', 'dates kept');
+  perform pg_temp.ok((select count(*) from session_references where session_id = v_new) = 2
+                     and (select number from session_references where session_id = v_new and url like '%mozilla%') = 1, 'references copied with numbers');
+  perform pg_temp.ok((select count(*) from bullets b join sections s on s.id = b.section_id
+                       where s.session_id = v_new and b.content like '%[[ref:' || (select id from session_references where session_id = v_new and number = 1) || ']]%') = 1,
+                     'copied note cites the copied reference');
+  perform pg_temp.ok((select count(*) from session_summaries where session_id = v_new) = 1, 'summaries copied');
 
   perform pg_temp.ok((select count(*) from search_notes('edge')) >= 1, 'keyword search');
 end $$;
