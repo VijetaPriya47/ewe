@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -437,6 +438,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     // The [n] chip that was tapped: note key → reference id.
     var openRef by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deleting by remember { mutableStateOf<Point?>(null) }
+    var reordering by remember { mutableStateOf(false) }
     val today = repo.today()
     val weekAgo = today.minusDays(7).toString()
     val total = sections.sumOf { it.second.size }
@@ -466,7 +468,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     }
 
     LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
-        item {
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (spoken.isNotEmpty() && reading == null) Row(
                 Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
                     .clickable(role = Role.Button) { reader.play(session.id, session.title, spoken) }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
@@ -475,7 +477,14 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                 Text("Listen to notes", style = ts(14, 600))
                 Text("~${NotesReader.minutes(spoken)} min", style = ts(13, 400, C.G500))
             }
-        }
+            if (sections.size > 1 && reading == null) Row(
+                Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
+                    .clickable(role = Role.Button) { reordering = true }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.Grip, null, tint = C.Ink, modifier = Modifier.size(18.dp))
+                Text("Reorder", style = ts(14, 600))
+            }
+        } }
         item {
             Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("${plural(total, "point")} · updated ${relativeDay(session.updatedAt, today).lowercase()}", style = ts(12, 400, C.G600))
@@ -491,7 +500,10 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                 Text(section.title, style = ts(16, 700).copy(textDecoration = if (section.important) TextDecoration.Underline else null),
                     modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
                     .clip(RoundedCornerShape(6.dp)).background(if (now) C.BlueBg else androidx.compose.ui.graphics.Color.Transparent)
-                    .then(if (reading != null) Modifier.clickable { spoken.indexOfFirst { it.key == "h:" + section.id }.takeIf { it >= 0 }?.let { reader.play(session.id, session.title, spoken, it) } } else Modifier)
+                    .then(if (reading != null) Modifier.clickable { spoken.indexOfFirst { it.key == "h:" + section.id }.takeIf { it >= 0 }?.let { reader.play(session.id, session.title, spoken, it) } }
+                        // press and hold a title to reorder sections
+                        else if (sections.size > 1) Modifier.combinedClickable(onLongClickLabel = "Reorder sections", onLongClick = { reordering = true }, onClick = {})
+                        else Modifier)
                     .padding(horizontal = if (now) 6.dp else 0.dp))
             }
             items(points, key = { section.id + it.bullet.id }) { p ->
@@ -586,6 +598,10 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
             val own = snap.section(p.bullet.sectionId)?.sessionId.orEmpty()
             run.go { repo.editBullet(p.bullet.id, if (p.bullet.isCode || p.bullet.isDiagram) text else Rich.shownToRefs(text, snap.referencesOf(own))) }
         }
+    }
+    if (reordering) ReorderSectionsDialog(sections.map { it.first }, onDismiss = { reordering = false }) { ids ->
+        reordering = false
+        run.go { repo.reorderSections(session.id, ids) }
     }
     deleting?.let { p ->
         if (p.link != null) Confirm("Remove from this topic?", "The point stays in the session it came from.", "Remove", onDismiss = { deleting = null }) {

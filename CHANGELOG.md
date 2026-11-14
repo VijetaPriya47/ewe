@@ -3,6 +3,16 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.7.0 — 2026-11-14
+
+### Added
+- **Reorder sections.** In Notes, tap **Reorder** (next to Listen to notes) or press and hold any
+  section title. Drag a section by its handle, or press and hold a row and drag it; the other
+  sections slide over to make room. **Done** saves the new order, **Cancel** leaves it as it was.
+  A section's points move with it. Read-aloud and the daily podcast follow the new order, and
+  new sections from the AI still go at the end. Screen readers get **Move up** / **Move down**
+  actions on each row.
+
 ## 0.6.0 — 2026-11-14
 
 ### Added

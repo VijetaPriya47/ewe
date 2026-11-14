@@ -323,4 +323,15 @@ class LogicTest {
         assertEquals("sys", claudeBody["system"]!!.let { if (it is kotlinx.serialization.json.JsonPrimitive) it.content else it.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content })
         server.shutdown()
     }
+
+    @Test fun reorderSectionsMath() {
+        val r = app.ewe.ui.Reorder
+        // rows 100 px apart: half a row or more moves one place; never past either end
+        assertEquals(0, r.target(0, 40f, 100f, 3))
+        assertEquals(1, r.target(0, 60f, 100f, 3))
+        assertEquals(2, r.target(0, 900f, 100f, 3))
+        assertEquals(0, r.target(2, -250f, 100f, 3))
+        assertEquals(listOf("b", "c", "a"), r.move(listOf("a", "b", "c"), 0, 2))
+        assertEquals(listOf("c", "a", "b"), r.move(listOf("a", "b", "c"), 2, 0))
+    }
 }

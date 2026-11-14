@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -320,6 +321,25 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             figureFile(b.content).delete()
         }
         refresh(); refreshEmbeddingsQuietly()
+    }
+
+    /** Sections in the order given; any section not listed (one with no points) keeps its place after them. */
+    suspend fun reorderSections(sessionId: String, ids: List<String>) {
+        val current = _snapshot.value.sectionsOf(sessionId)
+        val order = ids + current.map { it.id }.filter { it !in ids }
+        val changed = order.mapIndexedNotNull { i, id ->
+            val pos = (i + 1).toDouble()
+            current.firstOrNull { it.id == id }?.takeIf { it.position != pos }?.let { id to pos }
+        }
+        if (changed.isEmpty()) return
+        // show the new order straight away; the server then confirms it
+        val newPos = changed.toMap()
+        _snapshot.value = _snapshot.value.copy(sections = _snapshot.value.sections.map { s -> newPos[s.id]?.let { s.copy(position = it) } ?: s })
+        try {
+            coroutineScope {
+                changed.map { (id, pos) -> async { api.update("sections", "id=eq.$id", buildJsonObject { put("position", pos) }) } }.awaitAll()
+            }
+        } finally { refresh() }
     }
 
     suspend fun editCaption(id: String, caption: String) {

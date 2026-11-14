@@ -356,6 +356,24 @@ class ScreensTest {
         shot("4_session_notes_figure_selected")
     }
 
+    @Test fun reorderButton() {
+        show("4_session_notes_reorder_button") { SessionScreen(repo(snapshot(configured)), "cdn", true, {}, {}, {}) }
+        compose.onNodeWithText("Reorder").assertExists()
+    }
+
+    @Test fun reorderSections() {
+        val r = repo(snapshot(configured))
+        var saved: List<String>? = null
+        show("4_reorder_sections") { app.ewe.ui.ReorderSectionsScreen(r.snapshot.value.sectionsOf("cdn"), onCancel = {}, onSave = { saved = it }) }
+        // drag "Caching" (3rd) to the top by its handle
+        compose.onNodeWithContentDescription("Drag Caching").performTouchInput {
+            swipe(center, Offset(center.x, center.y - 2.2f * height), durationMillis = 600)
+        }
+        shot("4_reorder_sections_moved")
+        compose.onNodeWithText("Done").performClick()
+        org.junit.Assert.assertEquals(listOf("caching", "basics", "edge"), saved)
+    }
+
     @Test fun figureViewer() {
         val r = repo(snapshot(configured))
         show("4_figure_open") { app.ewe.ui.FigureViewer(r.figureFile(FIGURE_PATH), "Map of PoPs from the slide") {} }
