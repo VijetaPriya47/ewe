@@ -4,6 +4,8 @@ import { buildNotesRequest, buildSchema, renderPreviousNotes, summarize, toApply
 import { buildPlacementRequest, resolvePlacement } from "./placement.ts";
 import { embed, generateJson, type ProviderCfg, ProviderError, toGeminiSchema } from "./providers.ts";
 import { candidates, repairMermaid } from "./mermaid_repair.ts";
+import { citeRefs, cleanModelUrl, extractUrls, linksBlock, refsForModel, refsToSave, stripRefs } from "./links.ts";
+import { buildOverviewRequest, buildReferenceRequest, buildSummaryRequest, cleanMindmap } from "./notes.ts";
 
 const sections = [
   { id: "sec-1", title: "Basics", bullets: [{ id: "b-1", content: "CDN = servers near users" }, { id: "b-2", content: "Lower latency" }] },
@@ -121,6 +123,62 @@ Deno.test("the app's repair.js and this TypeScript copy agree", async () => {
     "flowchart TD subgraph S A --> B end",
   ];
   for (const c of samples) assertEquals(candidates(c), App.candidates(c), c);
+});
+
+Deno.test("links: found exactly in text, without sentence punctuation, once each", () => {
+  const t = "See https://web.dev/articles/http-cache. Also (https://en.wikipedia.org/wiki/Anycast_(networking)), " +
+    "www.cloudflare.com/learning/cdn and https://web.dev/articles/http-cache again; https://x.org/a?b=1&c=2!";
+  assertEquals(extractUrls(t), [
+    "https://web.dev/articles/http-cache",
+    "https://en.wikipedia.org/wiki/Anycast_(networking)",
+    "https://www.cloudflare.com/learning/cdn",
+    "https://x.org/a?b=1&c=2",
+  ]);
+  assertEquals(extractUrls("no links here"), []);
+  assertEquals(cleanModelUrl("www.example.com/a"), "https://www.example.com/a");
+  assertEquals(cleanModelUrl("javascript:alert(1)"), null);
+  assertEquals(cleanModelUrl("not a url"), null);
+});
+
+Deno.test("links: what gets saved, and how notes cite them", () => {
+  const textUrls = ["https://web.dev/a", "https://mdn.org/b"];
+  const save = refsToSave(textUrls, [
+    { key: "L2", url: "", title: "MDN page", description: "Caching" },
+    { key: "[P1]", url: "www.cloudflare.com/cdn", title: "Cloudflare", description: "CDN intro" },
+    { key: "P2", url: "not a link", title: "x", description: "" },
+    { key: "P3", url: "https://web.dev/a", title: "dup", description: "" },
+    { key: "R4", url: "https://old", title: "ignored", description: "" },
+  ]);
+  assertEquals(save.map((r) => [r.key, r.url, r.title]), [
+    ["L1", "https://web.dev/a", ""], ["L2", "https://mdn.org/b", "MDN page"], ["P1", "https://www.cloudflare.com/cdn", "Cloudflare"]]);
+
+  const ids = new Map([["L1", "aaa-1"], ["R3", "bbb-3"], ["P1", "ccc-1"]]);
+  assertEquals(citeRefs("TTL keeps a copy [L1]", ids, textUrls), "TTL keeps a copy [[ref:aaa-1]]");
+  assertEquals(citeRefs("From https://web.dev/a and old one [R3][ P1 ] [L9]", ids, textUrls),
+    "From [[ref:aaa-1]] and old one [[ref:bbb-3]][[ref:ccc-1]]");
+  assertEquals(refsForModel("TTL [[ref:bbb-3]] x [[ref:fff-9]]", new Map([["bbb-3", 3]])), "TTL [R3] x ");
+  assertEquals(stripRefs("TTL keeps a copy [[ref:aaa-1]][[ref:bbb-3]]"), "TTL keeps a copy");
+  assert(linksBlock([{ id: "b", number: 3, url: "https://old", title: "Old" }], textUrls).includes("[R3] Old — https://old\n[L1] https://web.dev/a"));
+});
+
+Deno.test("notes prompt cites links; previous notes show [R#]", () => {
+  const prev = renderPreviousNotes([{ id: "s", title: "T", bullets: [{ id: "b", content: "TTL [[ref:bbb-3]]", kind: "text" }] }], true, new Map([["bbb-3", 3]]));
+  assert(prev.text.includes("- [S1.1] TTL [R3]"));
+  const r = buildNotesRequest({ sessionType: "topic", sessionTitle: "CDN", previousNotes: prev.text, refs: prev.refs, newText: "x", images: [], links: linksBlock([], ["https://a.b"]) });
+  assert(r.system.includes("# LINKS") && JSON.stringify(r.schema).includes('"links"'));
+  assert((r.parts[r.parts.length - 1] as { text: string }).text.includes("[L1] https://a.b"));
+  const ref = buildReferenceRequest({ sessionTitle: "CDN", newText: "x", images: [], links: "" });
+  assert(ref.system.includes("Do NOT make notes"));
+  const sum = buildSummaryRequest({ sessionTitle: "CDN", newText: "x", images: [] });
+  assert(JSON.stringify(sum.schema).includes('"required":["title","mermaid","note"]'));
+  const ov = buildOverviewRequest({ sessionTitle: "CDN", notes: "## Basics\n- a" });
+  assert(ov.system.includes("ONLY names"));
+});
+
+Deno.test("mindmap names lose brackets and quotes; the root keeps its circle", () => {
+  assertEquals(cleanMindmap('```\nmindmap\n  root((CDN (intro)))\n    Caching: "TTL"\n      Purge [path]\n\n```'),
+    "mindmap\n  root((CDN intro))\n    Caching TTL\n      Purge path");
+  assertEquals(cleanMindmap("flowchart TD\n  A --> B"), "flowchart TD\n  A --> B");
 });
 
 Deno.test("chat summary wording", () => {

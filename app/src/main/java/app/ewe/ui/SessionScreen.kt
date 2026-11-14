@@ -72,6 +72,7 @@ import androidx.core.content.FileProvider
 import app.ewe.data.Message
 import app.ewe.data.Point
 import app.ewe.data.Repository
+import app.ewe.data.Rich
 import app.ewe.data.Session
 import app.ewe.data.Snapshot
 import app.ewe.data.Upload
@@ -86,7 +87,8 @@ fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, on
                   onOpenSession: (String) -> Unit, onSettings: () -> Unit) {
     val snap by repo.snapshot.collectAsState()
     val session = snap.session(sessionId)
-    var notesTab by rememberSaveable { mutableStateOf(startOnNotes) }
+    // 0 Session · 1 Notes · 2 Overview · 3 References
+    var tab by rememberSaveable { mutableStateOf(if (startOnNotes) 1 else 0) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
 
     if (session == null) {
@@ -117,14 +119,19 @@ fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, on
             IconBtn(Ic.More, "Session options") { showOptions = true }
         }
 
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            Tab("Session", !notesTab, Modifier.weight(1f)) { notesTab = false }
-            Tab("Notes", notesTab, Modifier.weight(1f)) { notesTab = true }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            listOf("Session", "Notes", "Overview", "References").forEachIndexed { i, label ->
+                Tab(label, tab == i, Modifier.weight(1f)) { tab = i }
+            }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(C.G200))
 
-        if (notesTab) NotesTab(repo, snap, session, onOpenSession, reader, reading?.takeIf { it.sessionId == session.id })
-        else ChatTab(repo, snap, session, onOpenNotes = { notesTab = true }, onSettings = onSettings)
+        when (tab) {
+            1 -> NotesTab(repo, snap, session, onOpenSession, reader, reading?.takeIf { it.sessionId == session.id }, onOpenTab = { tab = it })
+            2 -> OverviewTab(repo, snap, session)
+            3 -> ReferencesTab(repo, snap, session)
+            else -> ChatTab(repo, snap, session, onOpenTab = { tab = it }, onSettings = onSettings)
+        }
         reading?.takeIf { it.sessionId == session.id }?.let { ReaderBar(reader, it) }
     }
 
@@ -135,7 +142,7 @@ fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, on
 private fun Tab(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Column(modifier.height(44.dp).clickable(role = Role.Tab, onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            Text(text, style = ts(15, if (selected) 600 else 500, if (selected) C.Ink else C.G500))
+            Text(text, style = ts(14, if (selected) 600 else 500, if (selected) C.Ink else C.G500), maxLines = 1)
         }
         Box(Modifier.fillMaxWidth().height(2.dp).background(if (selected) C.Ink else androidx.compose.ui.graphics.Color.Transparent))
     }
@@ -149,7 +156,7 @@ private sealed interface ChatRow {
 }
 
 @Composable
-private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Session, onOpenNotes: () -> Unit, onSettings: () -> Unit) {
+private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Session, onOpenTab: (Int) -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val toast = LocalToast.current
     val uploads by repo.uploads.collectAsState()
@@ -168,6 +175,8 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
         cameraUri?.let { if (ok) picked.add(it) }
     }
     var attachMenu by remember { mutableStateOf(false) }
+    // Where the next message goes: Notes, References only, or Overview only (a summary).
+    var mode by rememberSaveable(session.id) { mutableStateOf("notes") }
     var pdf by remember { mutableStateOf<Uri?>(null) }
     val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) pdf = uri }
 
@@ -203,17 +212,22 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                 is ChatRow.Day -> Text(row.label, style = ts(12, 500, C.G500), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 is ChatRow.Msg -> if (row.m.role == "user") {
                     val files = remember(row.m.id, mediaVersion) { repo.photos(row.m.id) }
-                    UserMessage(row.m.content, row.m.imageCount, files.map { it }, emptyList(),
+                    UserMessage(row.m.content, row.m.imageCount, files.map { it }, emptyList(), row.m.mode,
                         when {
                             row.m.imageCount == 0 -> null
                             files.isNotEmpty() -> "${plural(row.m.imageCount, "photo")} · small copies saved on this phone"
                             else -> "${plural(row.m.imageCount, "photo")} · not saved (turn on in Settings)"
                         })
-                } else AssistantMessage(row.m.content, onOpenNotes.takeIf { row.m.content.startsWith("Added") })
+                } else AssistantMessage(row.m.content, when {
+                    row.m.mode == "reference" && row.m.content.startsWith("Saved") -> "Open References" to { onOpenTab(3) }
+                    row.m.mode == "summary" && row.m.content.startsWith("Saved") -> "Open Overview" to { onOpenTab(2) }
+                    row.m.mode == "notes" && row.m.content.startsWith("Added") -> "Open Notes" to { onOpenTab(1) }
+                    else -> null
+                })
             }
         }
         if (upload != null) {
-            item { UserMessage(upload.text, upload.images.size, emptyList(), upload.images, null) }
+            item { UserMessage(upload.text, upload.images.size, emptyList(), upload.images, upload.batches.firstOrNull()?.mode ?: "notes", null) }
             item {
                 if (upload.error == null) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar()
@@ -246,6 +260,20 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(12.dp)).background(C.AmberBg).clickable(onClick = onSettings).padding(12.dp))
     }
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            listOf("notes" to "Notes", "reference" to "Reference", "summary" to "Summary").forEach { (m, label) ->
+                val on = mode == m
+                Box(Modifier.height(30.dp).clip(CircleShape).background(if (on) C.Ink else C.White)
+                    .then(if (on) Modifier else Modifier.border(1.dp, C.G200, CircleShape))
+                    .clickable(role = Role.RadioButton) { mode = m }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                    Text(label, style = ts(13, 500, if (on) C.White else C.G700))
+                }
+            }
+        }
+        if (mode != "notes") Text(
+            if (mode == "reference") "Goes to References only — nothing is added to Notes."
+            else "Goes to Overview as a diagram — nothing is added to Notes.",
+            style = ts(12, 400, C.G500), modifier = Modifier.padding(start = 4.dp))
         if (picked.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(picked.toList()) { uri ->
                 Box {
@@ -282,20 +310,20 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             }
             Box(Modifier.weight(1f).heightIn(min = 44.dp, max = 140.dp).padding(horizontal = 4.dp, vertical = 11.dp), contentAlignment = Alignment.CenterStart) {
                 if (draft.isEmpty()) Text("Paste text or subtitles…", style = ts(15, 400, C.G500))
-                BasicTextField(draft, { draft = it }, textStyle = ts(15, 400, C.Ink, 1.4f), cursorBrush = SolidColor(C.Ink), enabled = !busy,
+                BasicTextField(draft, { draft = it; ModeWord.of(it)?.let { m -> mode = m } }, textStyle = ts(15, 400, C.Ink, 1.4f), cursorBrush = SolidColor(C.Ink), enabled = !busy,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), modifier = Modifier.fillMaxWidth())
             }
             IconBtn(Ic.Send, "Send", tint = C.White, bg = if (canSend) C.Ink else C.G400, iconSize = 20.dp, enabled = canSend) {
-                repo.send(session.id, draft.trim(), picked.toList())
-                draft = ""; picked.clear()
+                repo.send(session.id, ModeWord.strip(draft, mode).trim(), picked.toList(), mode)
+                draft = ""; picked.clear(); mode = "notes"
             }
         }
     }
     pdf?.let { uri ->
         PdfDialog(uri, onDismiss = { pdf = null }) { info, from, to ->
             pdf = null
-            repo.sendPdf(session.id, uri, info.name, from, to, draft.trim())
-            draft = ""
+            repo.sendPdf(session.id, uri, info.name, from, to, ModeWord.strip(draft, mode).trim(), mode)
+            draft = ""; mode = "notes"
         }
     }
 }
@@ -313,9 +341,13 @@ private fun Avatar() {
 }
 
 @Composable
-private fun UserMessage(text: String, imageCount: Int, saved: List<File>, pending: List<Uri>, caption: String?) {
+private fun UserMessage(text: String, imageCount: Int, saved: List<File>, pending: List<Uri>, mode: String, caption: String?) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when (mode) {
+            "reference" -> Tag("→ References", C.BlueBg, C.Blue, 600, 11)
+            "summary" -> Tag("→ Overview", C.PurpleBg, C.Purple, 600, 11)
+        }
         if (imageCount > 0) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), reverseLayout = true) {
                 val shape = RoundedCornerShape(12.dp)
@@ -340,14 +372,14 @@ private fun UserMessage(text: String, imageCount: Int, saved: List<File>, pendin
 }
 
 @Composable
-private fun AssistantMessage(text: String, onOpenNotes: (() -> Unit)?) {
+private fun AssistantMessage(text: String, action: Pair<String, () -> Unit>?) {
     Row(Modifier.fillMaxWidth().padding(end = 32.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Avatar()
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val lines = text.split('\n')
             Text(boldMarkup(lines.first()), style = ts(15, 400, C.Ink, 1.5f))
             lines.drop(1).filter { it.isNotBlank() }.forEach { Text(boldMarkup(it), style = ts(14, 400, C.G600, 1.45f)) }
-            if (onOpenNotes != null) Text("Open Notes", style = ts(14, 600, C.Blue), modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpenNotes).padding(vertical = 4.dp))
+            if (action != null) Text(action.first, style = ts(14, 600, C.Blue), modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = action.second).padding(vertical = 4.dp))
         }
     }
 }
@@ -356,12 +388,14 @@ private fun AssistantMessage(text: String, onOpenNotes: (() -> Unit)?) {
 
 @Composable
 private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Session, onOpenSession: (String) -> Unit,
-                                 reader: NotesReader, reading: ReaderState?) {
+                                 reader: NotesReader, reading: ReaderState?, onOpenTab: (Int) -> Unit) {
     val run = rememberRunner()
     val sections = remember(snap, session.id) { snap.sectionsOf(session.id).map { it to snap.points(it.id) }.filter { it.second.isNotEmpty() } }
     val linkedElsewhere = remember(snap) { snap.links.groupBy { it.bulletId } }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<Point?>(null) }
+    // The [n] chip that was tapped: note key → reference id.
+    var openRef by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deleting by remember { mutableStateOf<Point?>(null) }
     val today = repo.today()
     val weekAgo = today.minusDays(7).toString()
@@ -436,7 +470,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                                 onFixed = { repo.saveRepairedDiagram(p.bullet.id, it) },
                                 aiFix = { code, error -> repo.fixDiagram(code, error) })
                             p.bullet.isCode -> CodeBlock(p.bullet.content, p.bullet.lang, onLabel = toggle)
-                            else -> NoteTable(p.bullet.content, onLabel = toggle)
+                            else -> NoteTable(Rich.refsToShown(p.bullet.content, snap), onLabel = toggle)
                         }
                     }
                     else Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else mark ?: if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
@@ -444,13 +478,18 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(Modifier.padding(top = 8.dp).size(7.dp).clip(CircleShape).background(if (p.bullet.dateAdded >= weekAgo) C.BlueDot else C.G300))
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(p.bullet.content, style = ts(15, 400, C.Ink, 1.45f).copy(textDecoration = if (p.bullet.important) TextDecoration.Underline else null))
+                            NoteText(p.bullet.content, ts(15, 400, C.Ink, 1.45f).copy(textDecoration = if (p.bullet.important) TextDecoration.Underline else null), snap) { id ->
+                                openRef = if (openRef == key to id) null else key to id
+                            }
                             if (from != null) Row(Modifier.clip(RoundedCornerShape(6.dp)).background(C.PurpleBg).clickable { onOpenSession(from.id) }.padding(horizontal = 7.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Icon(Ic.Link, null, tint = C.Purple, modifier = Modifier.size(12.dp))
                                 Text("from ${from.title}", style = ts(11, 500, C.Purple), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
+                    }
+                    openRef?.takeIf { it.first == key }?.let { (_, id) ->
+                        RefCard(snap.reference(id), onAll = { openRef = null; onOpenTab(3) }, onClose = { openRef = null })
                     }
                     if (isSel) Column(Modifier.fillMaxWidth().padding(start = 25.dp, end = 0.dp)) {
                         val origin = when {
@@ -487,9 +526,11 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     }
 
     editing?.let { p ->
-        TextPrompt(when { p.bullet.isDiagram -> "Edit diagram code"; p.bullet.isCode -> "Edit code"; p.bullet.isTable -> "Edit table (Markdown)"; else -> "Edit point" }, p.bullet.content, "Save", singleLine = false, onDismiss = { editing = null }) { text ->
+        TextPrompt(when { p.bullet.isDiagram -> "Edit diagram code"; p.bullet.isCode -> "Edit code"; p.bullet.isTable -> "Edit table (Markdown)"; else -> "Edit point" }, Rich.refsToShown(p.bullet.content, snap), "Save", singleLine = false, onDismiss = { editing = null }) { text ->
             editing = null
-            run.go { repo.editBullet(p.bullet.id, text) }
+            // [n] typed in the text cites reference n of the session the point belongs to
+            val own = snap.section(p.bullet.sectionId)?.sessionId.orEmpty()
+            run.go { repo.editBullet(p.bullet.id, if (p.bullet.isCode || p.bullet.isDiagram) text else Rich.shownToRefs(text, snap.referencesOf(own))) }
         }
     }
     deleting?.let { p ->
@@ -598,4 +639,13 @@ private fun Swatch(color: androidx.compose.ui.graphics.Color, label: String, on:
         Box(Modifier.size(20.dp).clip(CircleShape).background(color)
             .then(if (on) Modifier.border(2.dp, C.Ink, CircleShape) else Modifier.border(1.dp, C.G300, CircleShape)))
     }
+}
+
+
+/** Typing "reference" or "summary" as the first word picks that mode; the word itself is not sent. */
+object ModeWord {
+    private val WORD = Regex("^\\s*(reference|summary)\\b[\\s:,.-]*", RegexOption.IGNORE_CASE)
+    fun of(text: String): String? = WORD.find(text)?.groupValues?.get(1)?.lowercase()
+    fun strip(text: String, mode: String): String = WORD.find(text)?.takeIf { it.groupValues[1].lowercase() == mode }
+        ?.let { text.removeRange(it.range) } ?: text
 }

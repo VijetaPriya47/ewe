@@ -20,7 +20,7 @@ provider and model per task. Keys stay on the phone and are sent with each reque
 app/                         Android app (Kotlin, Jetpack Compose)
 supabase/migrations/         Database schema: tables, rules, row-level security, RAG functions
 supabase/functions/
-  generate-notes/            Builds the notes prompt, calls your provider, saves notes atomically
+  generate-notes/            Notes, reference and summary modes: prompt, provider call, save
   linking/                   Embeddings: rebuild, placement into Topics, search by meaning
   _shared/                   Provider adapters (OpenAI-style, Claude, Gemini) and prompts
 supabase/tests/              SQL tests that run against a local Postgres
@@ -94,6 +94,12 @@ asks for an email and password. Then open Settings, add a provider key and pick 
   tables into Markdown tables (`kind = 'table'`), and underlines key points (`important`). You can
   highlight any point yellow or red.
 - **PDFs**: chosen pages are rendered to images on the phone and sent 10 per message.
+- **References**: links in what you send are saved per session with stable numbers (one row per
+  link, compared after tidying) and cited in notes as `[[ref:<id>]]`, shown as [n] chips.
+- **Message modes**: Notes, Reference (links only → References) or Summary (your own summary →
+  a diagram in Overview), picked with chips or by starting a message with `reference` / `summary`.
+- **Overview**: a recall map of section names made on the phone, an optional AI overview with
+  sub-topic names, and your own summaries.
 - **Podcast without AI**: if the script can't be written, the episode reads the due notes plainly.
 - **Search** runs on the phone's offline copy (keywords). When the index is complete, sections
   found by meaning are added below ("hybrid").

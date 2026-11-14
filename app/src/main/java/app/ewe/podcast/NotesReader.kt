@@ -177,7 +177,7 @@ class NotesReader(private val context: Context) {
                 if (points.isEmpty()) return@forEachIndexed
                 out += SpokenLine("h:${section.id}", "${Script.speakable(section.title)}.", si, section.title)
                 points.forEach { p ->
-                    val text = if (p.bullet.isTable) app.ewe.data.Rich.tableAsText(p.bullet.content) else p.bullet.content
+                    val text = app.ewe.data.Rich.stripRefs(if (p.bullet.isTable) app.ewe.data.Rich.tableAsText(p.bullet.content) else p.bullet.content)
                     out += SpokenLine(section.id + p.bullet.id, Script.speakable(text).trimEnd('.') + ".", si, section.title)
                 }
             }

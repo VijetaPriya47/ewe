@@ -14,6 +14,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
@@ -92,14 +94,14 @@ class ScreensTest {
             b("basics", "CDN = network of servers near users → serves content faster", 2, "cdn", 1.0),
             b("basics", "Lower latency + less load on origin server", 2, "cdn", 2.0),
             b("basics", "Static assets (images, JS, CSS) are the usual content", 2, "cdn", 3.0),
-            b("edge", "Edge server / PoP = CDN location close to users", 9, "cdn", 1.0),
+            b("edge", "Edge server / PoP = CDN location close to users [[ref:aaaa-0001]]", 9, "cdn", 1.0),
             b("edge", "Request routed to nearest PoP via DNS or Anycast", 0, "cdn", 1.5).copy(important = true),
             b("edge", "Anycast: same IP announced from many PoPs → network picks closest", 0, "cdn", 1.75),
             b("edge", "Cache miss → edge fetches from origin, then stores copy", 9, "cdn", 2.0),
             Bullet("code", "caching", "location /static/ {\n    expires 30d;\n    add_header Cache-Control \"public\";\n}", 4.0, d(0), "cdn", "m3", kind = "code", lang = "nginx"),
             Bullet("tbl", "caching", "| Header | Meaning |\n| --- | --- |\n| max-age | seconds fresh |\n| no-store | never cache |", 5.0, d(0), "cdn", "m3", kind = "table", highlight = "red"),
             Bullet("diag", "edge", "flowchart TD\n  U[User] --> D[DNS]\n  D --> P[Nearest PoP]\n  P -->|hit| C[Cached copy]\n  P -->|miss| O[Origin]", 2.5, d(0), "cdn", "m3", kind = "mermaid"),
-            b("caching", "TTL = how long edge keeps a copy before re-checking origin", 0, "cdn", 1.0).copy(important = true, highlight = "yellow"),
+            b("caching", "TTL = how long edge keeps a copy before re-checking origin [[ref:aaaa-0004]]", 0, "cdn", 1.0).copy(important = true, highlight = "yellow"),
             b("caching", "Purge by path to remove stale content before TTL ends", 0, "cdn", 2.0),
             b("grid", "9×9 grid; each row, column and 3×3 box holds 1–9 once", 1, "sud", 1.0),
             b("gen", "Backtracking fills a full grid, then remove cells while the solution stays unique", 1, "sud", 1.0),
@@ -110,10 +112,18 @@ class ScreensTest {
             b("trip1", "Passport, charger, rain jacket", 60, "trip", 1.0),
         )
         val links = listOf(BulletLink("l1", "b11", "caching", 3.0, t(1)))
+        val refs = listOf(
+            app.ewe.data.Reference("aaaa-0001", "cdn", 1, "https://www.cloudflare.com/learning/cdn/", "Cloudflare Learning — CDN basics", "Intro to edge servers and PoPs.", d(5)),
+            app.ewe.data.Reference("aaaa-0002", "cdn", 2, "https://www.rfc-editor.org/rfc/rfc7234", "RFC 7234 — HTTP caching", "The spec behind Cache-Control.", d(4)),
+            app.ewe.data.Reference("aaaa-0004", "cdn", 4, "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching", "MDN — HTTP caching", "Covers TTL and validation.", d(0)),
+        )
+        val summaries = listOf(app.ewe.data.Summary("bbbb-0001", "cdn", "upload", "Request path", "flowchart LR\n  U[User] --> E[Edge]\n  E -->|hit| C[Cached copy]\n  E -->|miss| O[Origin]", "Hits are served at the edge; misses go to the origin.", t(0)))
         val messages = listOf(
             Message("m1", "cdn", "user", "", 3, t(2)),
             Message("m2", "cdn", "assistant", "Added **12 points** in 2 new sections: **Basics**, **Edge servers**.", 0, t(2, 11)),
             Message("m3", "cdn", "user", "Subtitles from \"CDN caching explained\": cache hit ratio, TTL, purging by path…", 0, t(0, 8)),
+            Message("m5", "cdn", "user", "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching", 0, t(0, 9), mode = "reference"),
+            Message("m6", "cdn", "assistant", "Saved **1 reference**: [4] MDN — HTTP caching.\nNothing was added to Notes.", 0, t(0, 9), mode = "reference"),
             Message("m4", "cdn", "assistant", "Added **5 points**: 3 inline in **Edge servers**, 2 in a new section **Caching**.\n1 point skipped: already in your notes.", 0, t(0, 9)),
         )
         val schedule = listOf(
@@ -122,7 +132,7 @@ class ScreensTest {
             Schedule("r6", "edge", d(9), 4, 2, d(0)), Schedule("r7", "cc", d(8), 8, 3, d(0)),
             Schedule("r8", "shard", d(16), 16, 4, d(0)), Schedule("r9", "hc", d(32), 32, 5, d(0)),
         )
-        return Snapshot(settings, sessions, sections, bullets, links, messages, schedule, rag, System.currentTimeMillis())
+        return Snapshot(settings, sessions, sections, bullets, links, messages, schedule, refs, summaries, rag, System.currentTimeMillis())
     }
 
     private fun repo(snap: Snapshot, keys: Boolean = true): Repository {
@@ -207,6 +217,33 @@ class ScreensTest {
         app.ewe.podcast.NotesReader.get(context).shutdown()
     }
 
+    @Test fun referencesAndOverview() {
+        val r = repo(snapshot(configured))
+        show("9_references") { SessionScreen(r, "cdn", false, {}, {}, {}) }
+        compose.onNodeWithText("References").performClick()
+        compose.onNodeWithText("3 references · each link is kept once").assertExists()
+        shot("9_references_tab")
+        compose.onNodeWithText("Overview").performClick()
+        compose.onNodeWithText("Make a better overview (AI)").assertExists()
+        shot("9_overview_tab")
+        compose.onNodeWithText("Notes").performClick()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Edge server / PoP", substring = true))
+        shot("9_notes_chips")
+        compose.onNodeWithContentDescription("Reference 1", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("All references").assertExists()
+        shot("9_notes_reference_card")
+        compose.onNodeWithText("All references").performClick()
+        compose.onNodeWithText("3 references · each link is kept once").assertExists()
+    }
+
+    @Test fun modeChip() {
+        val r = repo(snapshot(configured))
+        show("9_chat_modes") { SessionScreen(r, "cdn", false, {}, {}, {}) }
+        compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("reference https://web.dev/articles/http-cache")
+        compose.onNodeWithText("Goes to References only — nothing is added to Notes.").assertExists()
+        shot("9_chat_mode_reference")
+    }
+
     @Test fun richNotes() {
         val r = repo(snapshot(configured))
         show("4_session_notes_rich") { SessionScreen(r, "cdn", true, {}, {}, {}) }
@@ -215,8 +252,10 @@ class ScreensTest {
         compose.onNodeWithContentDescription("Copy code").performClick()
         val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
         org.junit.Assert.assertTrue(clip.startsWith("location /static/ {\n    expires 30d;"))
-        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("TTL = how long edge keeps a copy before re-checking origin"))
-        compose.onNodeWithText("TTL = how long edge keeps a copy before re-checking origin").performClick()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("TTL = how long edge keeps a copy before re-checking origin", substring = true))
+        // tap the start of the line (the [4] chip at its end opens the reference instead)
+        compose.onNodeWithText("TTL = how long edge keeps a copy before re-checking origin", substring = true)
+            .performTouchInput { click(androidx.compose.ui.geometry.Offset(60f, 20f)) }
         compose.onNodeWithContentDescription("Highlight red").assertExists()
         compose.onNodeWithContentDescription("Remove underline").assertExists()
         shot("4_session_notes_rich_selected")

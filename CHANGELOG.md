@@ -3,7 +3,34 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
-## 0.3.1 — 2026-11-14
+## Planned for 0.5.0
+
+- Crop a photo before it is uploaded.
+
+## 0.4.0 — 2026-11-14
+
+### Added
+- **Four tabs per session: Session · Notes · Overview · References.**
+- **References.** Every link in what you send is saved to the session's References tab, once
+  (the same page written slightly differently — `www.`, a trailing `/`, `#…`, tracking tags like
+  `utm_…` — counts as one link). Each gets a number that never changes. Notes that use a link show a
+  small **[n]** chip; tap it for the title, the link, **Open**, **Copy** and **All references**.
+  Links you paste are copied exactly by the app; the AI only gives titles and descriptions, and reads
+  links that appear in photos. Tap a reference to edit or delete it (notes that cited a deleted one
+  show **[?]**). When you edit a point you see and type plain [n] numbers.
+- **Message modes: Notes · Reference · Summary**, as chips above the message box. Typing
+  `reference` or `summary` as the first word selects it for you (the word itself is not sent).
+  - **Reference**: the links and what they are about go to References only; nothing is added to Notes.
+  - **Summary**: your own summary, or a photo of a diagram you drew, is redrawn as a diagram in
+    Overview; nothing is added to Notes.
+  Each message in the chat shows where it went (→ References, → Overview).
+- **Overview tab.**
+  - **Recall map**: a mind map of the session's section names only, made on the phone (no AI) and
+    always up to date — look at the names and try to recall what's under each.
+  - **Make a better overview (AI)**: one call to your notes model adds the key sub-topic names under
+    each section, still without details; marked "notes changed since" when it gets out of date.
+  - **Your summaries**: the summaries you sent, newest first, with date, Copy and delete.
+- PDFs can be sent in Reference or Summary mode too.
 
 ### Fixed
 - **Diagrams that couldn't be drawn.** The notes AI sometimes wrote a whole Mermaid diagram on one
@@ -11,13 +38,22 @@ Every release of ewe is listed here, newest first. Install a release from the re
   - the prompt asks for one statement per line and quoted labels, with an example;
   - the server mends one-line flowcharts and unquoted labels before saving;
   - before drawing, the app checks the code with Mermaid and tries the same repairs (plus stray
-    ``` fences); a repair that draws is shown at once and saved, so existing broken diagrams
-    mend themselves the next time you open them;
+    ``` fences); a repair that draws is shown at once and saved, so existing broken diagrams mend
+    themselves the next time you open them;
   - if nothing works, your notes model is asked once to correct the code ("Fixing this diagram…");
-    only if that fails too is the code shown, now with a **Fix with AI** button.
+    only if that fails too is the code shown, with a **Fix with AI** button.
+  (This fix was first sent as a 0.3.1 build.)
+- **"App not installed" when updating.** Builds made here and builds from GitHub Releases had
+  different version numbers, so one could count as older than the other. The number now comes from
+  the release (0.4.0 → 400) everywhere, so every new release installs over the last one.
 
-### Added
-- Edge function `fix-diagram` (used only for the last step above).
+### Database and server
+- Migration `20261114160000_ewe_07_references_overview.sql`: `session_references` (with
+  `ref_url_key` to compare links and stable numbers), `session_summaries`, `messages.mode`,
+  `upsert_references`; embeddings ignore citation marks; "Recreate as Topic/Project" copies
+  references (same numbers) and summaries.
+- Edge functions: `generate-notes` gains the reference and summary modes and saves links;
+  new `make-overview` and `fix-diagram`.
 
 ## 0.3.0 — 2026-11-14
 

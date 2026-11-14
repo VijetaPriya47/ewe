@@ -62,7 +62,7 @@ private val aiAttempted = mutableSetOf<String>()
  */
 @Composable
 fun MermaidDiagram(
-    code: String, modifier: Modifier = Modifier, onLabel: (() -> Unit)? = null,
+    code: String, modifier: Modifier = Modifier, onLabel: (() -> Unit)? = null, label: String = "Diagram · Mermaid",
     fixKey: String? = null, onFixed: ((String) -> Unit)? = null, aiFix: (suspend (String, String) -> String)? = null,
 ) {
     // Height reported by the page, in CSS pixels (= dp in a WebView at its default scale).
@@ -84,7 +84,7 @@ fun MermaidDiagram(
     }
 
     Box(modifier) {
-        ExtraFrame("Diagram · Mermaid", "Diagram code", code, onLabel, barExtras = {
+        ExtraFrame(label, "Diagram code", code, onLabel, barExtras = {
             if (error == null && !fixing) Text(if (showCode) "Diagram" else "Code", style = ts(11, 500, C.G500),
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button) { showCode = !showCode }.padding(horizontal = 8.dp, vertical = 10.dp))
         }) {

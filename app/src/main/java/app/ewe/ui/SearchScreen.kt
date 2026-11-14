@@ -116,9 +116,9 @@ fun SearchScreen(repo: Repository, onBack: () -> Unit, onOpen: (sessionId: Strin
                         Text(highlight("${n.session.title} › ${n.section.title}", query), style = ts(12, 400, C.G600))
                         if (n.point.bullet.kind != "text") {
                             Text(when { n.point.bullet.isDiagram -> "Diagram"; n.point.bullet.isCode -> "Code"; else -> "Table" }, style = ts(11, 600, C.G500))
-                            Text(highlight(n.point.bullet.content, query), style = ts(13, 400, C.G700, 1.4f).copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                            Text(highlight(app.ewe.data.Rich.refsToShown(n.point.bullet.content, snap), query), style = ts(13, 400, C.G700, 1.4f).copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
                                 maxLines = 4, overflow = TextOverflow.Ellipsis)
-                        } else Text(highlight(n.point.bullet.content, query), style = ts(15, 400, C.Ink, 1.45f))
+                        } else Text(highlight(app.ewe.data.Rich.refsToShown(n.point.bullet.content, snap), query), style = ts(15, 400, C.Ink, 1.45f))
                         Text("Added ${longDate(n.point.bullet.dateAdded)}" + (n.from?.let { " · from ${it.title}" } ?: ""), style = ts(12, 400, C.G500))
                     }
                 }

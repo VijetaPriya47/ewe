@@ -107,6 +107,37 @@ class LogicTest {
         assertEquals(3, Planner.due(snap, LocalDate.parse("2026-11-12"), 2).size) // skipped days carry over
     }
 
+    @Test fun `references - chips, editing as numbers, speech without marks`() {
+        val r1 = app.ewe.data.Reference("aa-1", "cdn", 1, "https://web.dev/a", "web.dev")
+        val r4 = app.ewe.data.Reference("dd-4", "cdn", 4, "https://mdn.org/b", "MDN")
+        val s = snap.copy(references = listOf(r1, r4),
+            bullets = snap.bullets + Bullet("cite", "c1", "TTL keeps a copy [[ref:aa-1]][[ref:dd-4]] and [[ref:ee-9]]", 9.0, "2026-11-08", "cdn"))
+        val text = s.bullet("cite")!!.content
+        assertEquals(listOf("aa-1", "dd-4", "ee-9"), app.ewe.data.Rich.refIds(text))
+        assertEquals("TTL keeps a copy and", app.ewe.data.Rich.stripRefs(text))
+        assertEquals("TTL keeps a copy [1][4] and [?]", app.ewe.data.Rich.refsToShown(text, s))
+        assertEquals("TTL keeps a copy [[ref:aa-1]][[ref:dd-4]] and", app.ewe.data.Rich.shownToRefs("TTL keeps a copy [1][4] and [?]", s.referencesOf("cdn")))
+        assertEquals("see [7]", app.ewe.data.Rich.shownToRefs("see [7]", s.referencesOf("cdn")))   // no reference 7: left as typed
+        assertEquals(listOf("TTL keeps a copy " to null, "" to "aa-1", "" to "dd-4", " and " to null, "" to "ee-9"), app.ewe.data.Rich.pieces(text))
+        assertEquals(1, s.citations["aa-1"]); assertEquals(null, s.citations["zz"])
+        assertEquals(listOf(1, 4), s.referencesOf("cdn").map { it.number })
+        // the podcast and read-aloud never say the marks
+        assertTrue(app.ewe.podcast.NotesReader.lines(s, "cdn").none { "ref:" in it.text })
+    }
+
+    @Test fun `typing reference or summary first picks the mode`() {
+        assertEquals("reference", app.ewe.ui.ModeWord.of("Reference: https://web.dev"))
+        assertEquals("summary", app.ewe.ui.ModeWord.of("  summary\nmy own notes"))
+        assertEquals(null, app.ewe.ui.ModeWord.of("Summary of chapter 3".replace("Summary", "Summaries")))
+        assertEquals(null, app.ewe.ui.ModeWord.of("a reference to x"))
+        assertEquals("https://web.dev", app.ewe.ui.ModeWord.strip("reference: https://web.dev", "reference"))
+        assertEquals("reference: x", app.ewe.ui.ModeWord.strip("reference: x", "notes"))   // chip changed back: keep the word
+    }
+
+    @Test fun `recall map lists section names only`() {
+        assertEquals("mindmap\n  root((CDN Ch 4))\n    Basics\n    Edge servers PoP\n    Caching", app.ewe.ui.recallMap("CDN (Ch 4)", listOf("Basics", "Edge servers [PoP]", "", "Caching", "Basics")))
+    }
+
     @Test fun `tables are read row by row, code is skipped`() {
         val md = "| Level | Clues | Time |\n| --- | :---: | ---: |\n| Easy | 36 | 5 min |\n| Hard | 22 | |"
         val t = app.ewe.data.Rich.parseTable(md)!!

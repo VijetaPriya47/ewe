@@ -39,7 +39,7 @@ sealed interface SyncState {
 }
 
 /** One chat message to send: text and up to 10 images. */
-data class Batch(val text: String, val images: List<Uri>)
+data class Batch(val text: String, val images: List<Uri>, val mode: String = "notes")
 
 /**
  * An upload that is being turned into notes, or one that failed and can be retried.
@@ -171,7 +171,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                 val sections = async { api.selectAll("sections", "id,session_id,title,position,important") }
                 val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
-                val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at") }
+                val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at,mode") }
+                val references = async { api.selectAll("session_references", "id,session_id,number,url,title,description,date_added,origin_message_id") }
+                val summaries = async { api.selectAll("session_summaries", "id,session_id,kind,title,mermaid,note,created_at") }
                 val schedule = async { api.selectAll("revision_schedule", "id,section_id,added_date,interval_days,revisions_done,next_due_date,last_revised") }
                 val settings = async { loadSettings() }
                 val st = settings.await()
@@ -182,7 +184,8 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                     sessions = decode(sessions.await()), sections = decode(sections.await()),
                     bullets = decode(bullets.await()), links = decode(links.await()),
                     messages = decode<Message>(messages.await()).sortedBy { instantOf(it.createdAt) },
-                    schedule = decode(schedule.await()), rag = rag, syncedAt = System.currentTimeMillis(),
+                    schedule = decode(schedule.await()), references = decode(references.await()), summaries = decode(summaries.await()),
+                    rag = rag, syncedAt = System.currentTimeMillis(),
                 )
             }
             publish(s)
@@ -267,6 +270,37 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         scope.launch { runCatching { editBullet(id, code) } }
     }
 
+    // ───────────── references and overview ─────────────
+    suspend fun updateReference(id: String, title: String, url: String, description: String) {
+        val clean = url.trim()
+        if (!Regex("^https?://\\S+$", RegexOption.IGNORE_CASE).matches(clean)) throw ApiException("A link must start with http:// or https://.")
+        try {
+            api.update("session_references", "id=eq.$id", buildJsonObject {
+                put("title", title.trim()); put("url", clean); put("description", description.trim())
+            })
+        } catch (e: ApiException) {
+            if (e.message.orEmpty().contains("duplicate key")) throw ApiException("That link is already saved in this session.")
+            throw e
+        }
+        refresh()
+    }
+
+    /** The reference goes; notes that cited it show [?]. The other references keep their numbers. */
+    suspend fun deleteReference(id: String) { api.delete("session_references", "id=eq.$id"); refresh() }
+
+    suspend fun deleteSummary(id: String) { api.delete("session_summaries", "id=eq.$id"); refresh() }
+
+    fun saveRepairedSummary(id: String, mermaid: String) {
+        scope.launch { runCatching { api.update("session_summaries", "id=eq.$id", buildJsonObject { put("mermaid", mermaid) }); refresh() } }
+    }
+
+    /** "Make a better overview": one AI call → a recall map (names only), replacing the previous one. */
+    suspend fun makeOverview(sessionId: String) {
+        val cfg = prefs.cfg(settings.notesProvider, settings.notesModel) ?: throw ApiException("Pick a notes model in Settings first.")
+        api.function("make-overview", buildJsonObject { put("session_id", sessionId); putProvider("provider", cfg) })
+        refresh()
+    }
+
     /** Yellow or red highlight on a point, or null to clear it. */
     suspend fun setHighlight(id: String, color: String?) {
         api.update("bullets", "id=eq.$id", buildJsonObject { put("highlight", color) }); refresh()
@@ -295,9 +329,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     private fun busy(sessionId: String) = _uploads.value[sessionId]?.let { it.error == null } == true
 
     /** Runs outside the screen's lifetime, so leaving the chat does not cancel it. */
-    fun send(sessionId: String, text: String, images: List<Uri>) {
+    fun send(sessionId: String, text: String, images: List<Uri>, mode: String = "notes") {
         if (busy(sessionId)) return
-        run(sessionId, Upload(listOf(Batch(text, images)), "Reading…"))
+        run(sessionId, Upload(listOf(Batch(text, images, mode)), "Reading…"))
     }
 
     /** Sends whatever is left of a failed upload (for a PDF: the remaining pages). */
@@ -310,7 +344,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
      * Pages [from]..[to] of a PDF: drawn as images on the phone, then sent 10 pages per message,
      * one after another, so each message sees the notes made from the pages before it.
      */
-    fun sendPdf(sessionId: String, uri: Uri, name: String, from: Int, to: Int, note: String) {
+    fun sendPdf(sessionId: String, uri: Uri, name: String, from: Int, to: Int, note: String, mode: String = "notes") {
         if (busy(sessionId)) return
         val dir = File(context.cacheDir, "pdf/${System.currentTimeMillis()}")
         val placeholder = Batch("PDF: $name, ${Pdf.pagesLabel(from, to)}", emptyList())
@@ -326,7 +360,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
                 var i = 0
                 chunks.mapIndexed { c, range ->
                     val label = "PDF: $name, ${Pdf.pagesLabel(range.first, range.last)}"
-                    Batch(if (c == 0 && note.isNotBlank()) "$label\n\n${note.trim()}" else label, pages.subList(i, i + range.count()).also { i += range.count() })
+                    Batch(if (c == 0 && note.isNotBlank()) "$label\n\n${note.trim()}" else label, pages.subList(i, i + range.count()).also { i += range.count() }, mode)
                 }
             } catch (e: Exception) {
                 dir.deleteRecursively()
@@ -372,6 +406,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         val res = api.function("generate-notes", buildJsonObject {
             put("session_id", sessionId)
             put("text", batch.text)
+            put("mode", batch.mode)
             put("local_date", today().toString())
             put("images", buildJsonArray { encoded.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
             putProvider("provider", cfg)

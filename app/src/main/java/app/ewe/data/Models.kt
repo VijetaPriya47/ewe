@@ -77,6 +77,33 @@ data class Message(
     val content: String = "",
     @SerialName("image_count") val imageCount: Int = 0,
     @SerialName("created_at") val createdAt: String = "",
+    /** Where it went: "notes", "reference" (References only) or "summary" (Overview only). */
+    val mode: String = "notes",
+)
+
+/** A link saved for a session. Its number never changes; notes cite it as [[ref:id]], shown as [n]. */
+@Serializable
+data class Reference(
+    val id: String,
+    @SerialName("session_id") val sessionId: String,
+    val number: Int,
+    val url: String,
+    val title: String = "",
+    val description: String = "",
+    @SerialName("date_added") val dateAdded: String = "",
+    @SerialName("origin_message_id") val originMessageId: String? = null,
+)
+
+/** A diagram in the Overview tab: your own summary ("upload") or the AI overview ("ai_overview"). */
+@Serializable
+data class Summary(
+    val id: String,
+    @SerialName("session_id") val sessionId: String,
+    val kind: String,
+    val title: String = "",
+    val mermaid: String = "",
+    val note: String = "",
+    @SerialName("created_at") val createdAt: String = "",
 )
 
 @Serializable
@@ -134,6 +161,8 @@ data class Snapshot(
     val links: List<BulletLink> = emptyList(),
     val messages: List<Message> = emptyList(),
     val schedule: List<Schedule> = emptyList(),
+    val references: List<Reference> = emptyList(),
+    val summaries: List<Summary> = emptyList(),
     val rag: RagStatus = RagStatus(),
     val syncedAt: Long = 0,
 ) {
@@ -145,6 +174,8 @@ data class Snapshot(
     }
     private val bulletsBySection by lazy { bullets.groupBy { it.sectionId } }
     private val linksBySection by lazy { links.groupBy { it.sectionId } }
+    private val referenceById by lazy { references.associateBy { it.id } }
+    private val referencesBySession by lazy { references.sortedBy { it.number }.groupBy { it.sessionId } }
 
     fun session(id: String?) = sessionById[id]
     fun section(id: String?) = sectionById[id]
@@ -159,6 +190,17 @@ data class Snapshot(
             bulletById[l.bulletId]?.let { Point(it, l.position, l) }
         }
         return (own + linked).sortedBy { it.position }
+    }
+
+    fun reference(id: String?) = referenceById[id]
+    fun referencesOf(sessionId: String) = referencesBySession[sessionId].orEmpty()
+    fun summariesOf(sessionId: String) = summaries.filter { it.sessionId == sessionId }.sortedByDescending { instantOf(it.createdAt) }
+
+    /** How many notes cite each reference. */
+    val citations: Map<String, Int> by lazy {
+        val counts = HashMap<String, Int>()
+        bullets.forEach { b -> Rich.refIds(b.content).forEach { counts[it] = (counts[it] ?: 0) + 1 } }
+        counts
     }
 
     fun noteCount(sessionId: String) = sectionsOf(sessionId).sumOf {

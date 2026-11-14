@@ -68,7 +68,7 @@ object Planner {
             val section = s.section(r.sectionId) ?: return@mapNotNull null
             val session = s.session(section.sessionId)?.takeIf { it.isActive } ?: return@mapNotNull null
             val notes = s.ownBullets(section.id).filter { it.dateAdded == r.addedDate && it.isSpoken }.sortedBy { it.position }
-                .map { if (it.isTable) app.ewe.data.Rich.tableAsText(it.content) else it.content }
+                .map { app.ewe.data.Rich.stripRefs(if (it.isTable) app.ewe.data.Rich.tableAsText(it.content) else it.content) }
             if (notes.isEmpty()) return@mapNotNull null
             val rev = r.revisionsDone + 1
             DueItem(r.id, session.id, session.title, section.title, section.position, r.addedDate, r.intervalDays, rev, Level.of(rev, perLevel), notes)
