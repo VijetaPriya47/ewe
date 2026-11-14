@@ -1,0 +1,35 @@
+name: Add earlier releases
+
+# One-time, run by hand (Actions → "Add earlier releases" → Run workflow).
+# Creates a release for each version before 0.5.0 from the APK that version shipped with
+# (kept in the repo's history at release/ewe.apk), with its CHANGELOG.md section as notes.
+# Versions that already have a release are skipped, so running it twice is harmless.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create the missing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # version:commit — the commit each version was released from
+          for pair in 0.1.0:b2c1c22 0.2.0:2a0a0c0 0.3.0:a8f4621 0.4.0:058ab8f; do
+            v="${pair%%:*}"; c="$(git rev-parse "${pair##*:}")"
+            if gh release view "v$v" >/dev/null 2>&1; then echo "v$v already exists"; continue; fi
+            git show "$c:release/ewe.apk" > "ewe-$v.apk"
+            awk -v v="$v" 'index($0, "## " v " ") == 1 {on = 1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md
+            case "$v" in 0.1.0|0.2.0|0.3.0)
+              printf '\n---\nKept for the record. This build has an old version number, so it will not install over a newer ewe (uninstall first if you really need it). Use the newest release instead.\n' >> notes.md ;;
+            esac
+            gh release create "v$v" "ewe-$v.apk" --target "$c" --title "ewe $v" --notes-file notes.md --latest=false
+            echo "created v$v"
+          done

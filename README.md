@@ -58,10 +58,11 @@ Alternative without the integration: add the repository secrets `SUPABASE_ACCESS
 
 ### 2. The app
 
-Every push to `main` builds the APK. Download `ewe.apk` from the repository's **Releases** page
-(the release named "latest") on your phone and open it to install; a copy of the current build is
-also in `release/ewe.apk`. Builds are signed with the same sideload key, so a new build installs
-over the old one.
+Every push to `main` builds the APK. Each version has its own release on the repository's
+**Releases** page (v0.4.0, v0.5.0 …) with its changes and the APK (`ewe-<version>.apk`); open it on
+your phone to install. A copy of the current build is also in `release/ewe.apk`. Builds are signed
+with the same sideload key and numbered from the version (0.5.0 → 500), so a newer version installs
+over an older one.
 
 The project URL and publishable key are baked in (`gradle.properties`), so the first screen only
 asks for an email and password. Then open Settings, add a provider key and pick a **Notes model**
