@@ -14,6 +14,9 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasText
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import app.ewe.data.AppJson
@@ -78,7 +81,7 @@ class ScreensTest {
             Session("trip", "Trip Planning", "project", false, null, t(60), t(21)),
         )
         val sections = listOf(
-            Section("basics", "cdn", "Basics", 1.0), Section("edge", "cdn", "Edge servers", 2.0), Section("caching", "cdn", "Caching", 3.0),
+            Section("basics", "cdn", "Basics", 1.0), Section("edge", "cdn", "Edge servers", 2.0), Section("caching", "cdn", "Caching", 3.0, important = true),
             Section("grid", "sud", "Grid rules", 1.0), Section("gen", "sud", "Generator", 2.0),
             Section("cc", "http", "Cache-Control headers", 1.0), Section("shard", "sd", "Sharding", 1.0), Section("hc", "lb", "Health checks", 1.0),
             Section("trip1", "trip", "Packing", 1.0),
@@ -90,11 +93,13 @@ class ScreensTest {
             b("basics", "Lower latency + less load on origin server", 2, "cdn", 2.0),
             b("basics", "Static assets (images, JS, CSS) are the usual content", 2, "cdn", 3.0),
             b("edge", "Edge server / PoP = CDN location close to users", 9, "cdn", 1.0),
-            b("edge", "Request routed to nearest PoP via DNS or Anycast", 0, "cdn", 1.5),
+            b("edge", "Request routed to nearest PoP via DNS or Anycast", 0, "cdn", 1.5).copy(important = true),
             b("edge", "Anycast: same IP announced from many PoPs → network picks closest", 0, "cdn", 1.75),
             b("edge", "Cache miss → edge fetches from origin, then stores copy", 9, "cdn", 2.0),
+            Bullet("code", "caching", "location /static/ {\n    expires 30d;\n    add_header Cache-Control \"public\";\n}", 4.0, d(0), "cdn", "m3", kind = "code", lang = "nginx"),
+            Bullet("tbl", "caching", "| Header | Meaning |\n| --- | --- |\n| max-age | seconds fresh |\n| no-store | never cache |", 5.0, d(0), "cdn", "m3", kind = "table", highlight = "red"),
             Bullet("diag", "edge", "flowchart TD\n  U[User] --> D[DNS]\n  D --> P[Nearest PoP]\n  P -->|hit| C[Cached copy]\n  P -->|miss| O[Origin]", 2.5, d(0), "cdn", "m3", kind = "mermaid"),
-            b("caching", "TTL = how long edge keeps a copy before re-checking origin", 0, "cdn", 1.0),
+            b("caching", "TTL = how long edge keeps a copy before re-checking origin", 0, "cdn", 1.0).copy(important = true, highlight = "yellow"),
             b("caching", "Purge by path to remove stale content before TTL ends", 0, "cdn", 2.0),
             b("grid", "9×9 grid; each row, column and 3×3 box holds 1–9 once", 1, "sud", 1.0),
             b("gen", "Backtracking fills a full grid, then remove cells while the solution stays unique", 1, "sud", 1.0),
@@ -147,7 +152,13 @@ class ScreensTest {
         compose.onRoot().captureRoboImage("build/screens/$name.png")
     }
 
-    @Before fun setUp() { WorkManagerTestInitHelper.initializeTestWorkManager(context) }
+    @Before fun setUp() {
+        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        // No media services in this harness: screens must work without a player connection.
+        val shadow = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+        listOf(app.ewe.podcast.PlaybackService::class.java, app.ewe.podcast.ReaderService::class.java)
+            .forEach { shadow.declareComponentUnbindable(android.content.ComponentName(context, it)) }
+    }
 
     @Test fun auth() = show("0_sign_in") { AuthScreen(repo(Snapshot()).also { it.prefs.clearAuth(); it.prefs.supabaseUrl = ""; it.prefs.anonKey = "" }) }
 
@@ -194,6 +205,32 @@ class ScreensTest {
         compose.onNodeWithContentDescription("Stop reading").performClick()
         compose.onNodeWithText("Listen to notes").assertExists()
         app.ewe.podcast.NotesReader.get(context).shutdown()
+    }
+
+    @Test fun richNotes() {
+        val r = repo(snapshot(configured))
+        show("4_session_notes_rich") { SessionScreen(r, "cdn", true, {}, {}, {}) }
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Code · nginx"))
+        shot("4_session_notes_rich_code_table")
+        compose.onNodeWithContentDescription("Copy code").performClick()
+        val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
+        org.junit.Assert.assertTrue(clip.startsWith("location /static/ {\n    expires 30d;"))
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("TTL = how long edge keeps a copy before re-checking origin"))
+        compose.onNodeWithText("TTL = how long edge keeps a copy before re-checking origin").performClick()
+        compose.onNodeWithContentDescription("Highlight red").assertExists()
+        compose.onNodeWithContentDescription("Remove underline").assertExists()
+        shot("4_session_notes_rich_selected")
+    }
+
+    @Test fun plainEpisode() {
+        val r = repo(snapshot(configured))
+        val store = EpisodeStore(context)
+        store.save(Episode(today.toString(), System.currentTimeMillis(), 30, listOf(
+            Chapter(null, null, "Intro", "", "", 0, 0, "", "hi", listOf(AudioFile("/x/i.wav", 20_000))),
+            Chapter("r3", "cdn", "CDN", "Basics", d(2), 2, 2, "Detailed", "s", listOf(AudioFile("/x/a.wav", 240_000))),
+        ), plain = true, plainReason = "The AI script could not be written: No internet connection."))
+        show("8_revision_plain") { RevisionScreen(r, store, {}, {}) }
+        compose.onNodeWithText("Try the AI script again").assertExists()
     }
 
     @Test fun diagram() {
@@ -265,9 +302,6 @@ class ScreensTest {
             ch("r8", "System Design · Ch 4", "Sharding", 16, 16, 5, "Key points", 120), ch("r9", "Load Balancers", "Health checks", 32, 32, 6, "Key points", 90),
             ch(null, "Outro", "", 0, 0, 0, "", 30),
         ), deferred = 1, heard = setOf("r4"), marked = setOf("r3")))
-        // No media service in this harness: the screen must still render without a player connection.
-        org.robolectric.Shadows.shadowOf(context as android.app.Application)
-            .declareComponentUnbindable(android.content.ComponentName(context, app.ewe.podcast.PlaybackService::class.java))
         show("8_revision_ready") { RevisionScreen(r, store, {}, {}) }
     }
 }

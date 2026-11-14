@@ -33,6 +33,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import app.ewe.data.Pdf
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +65,7 @@ import app.ewe.podcast.NotesReader
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -158,6 +167,9 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         cameraUri?.let { if (ok) picked.add(it) }
     }
+    var attachMenu by remember { mutableStateOf(false) }
+    var pdf by remember { mutableStateOf<Uri?>(null) }
+    val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) pdf = uri }
 
     val rows = remember(snap.messages, session.id) {
         val today = LocalDate.now()
@@ -211,8 +223,8 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                     Text("Notes were not made", style = ts(14, 600, C.Red))
                     Text(upload.error, style = ts(13, 400, C.Red, 1.45f))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MiniButton("Try again", C.Red, C.White) { repo.send(session.id, upload.text, upload.images) }
-                        MiniButton("Edit", C.White, C.Red) {
+                        MiniButton("Try again", C.Red, C.White) { repo.retry(session.id) }
+                        if (upload.editable) MiniButton("Edit", C.White, C.Red) {
                             draft = upload.text; picked.clear(); picked.addAll(upload.images); repo.dismissUpload(session.id)
                         }
                         MiniButton("Discard", C.White, C.Red) { repo.dismissUpload(session.id) }
@@ -247,8 +259,18 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
         val busy = upload != null && upload.error == null
         val canSend = !busy && notesModelSet && (draft.isNotBlank() || picked.isNotEmpty())
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).border(1.dp, C.G300, RoundedCornerShape(24.dp)).padding(6.dp), verticalAlignment = Alignment.Bottom) {
-            IconBtn(Ic.Attach, "Attach photos", enabled = !busy) {
-                gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            Box {
+                IconBtn(Ic.Attach, "Attach photos or a PDF", enabled = !busy) { attachMenu = true }
+                DropdownMenu(attachMenu, onDismissRequest = { attachMenu = false }, containerColor = C.White) {
+                    DropdownMenuItem(text = { Text("Photos", style = ts(15)) }, onClick = {
+                        attachMenu = false
+                        gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    })
+                    DropdownMenuItem(text = { Text("PDF pages", style = ts(15)) }, onClick = {
+                        attachMenu = false
+                        runCatching { pdfPicker.launch(arrayOf("application/pdf")) }.onFailure { toast("No file picker found.") }
+                    })
+                }
             }
             IconBtn(Ic.Camera, "Take photo", enabled = !busy) {
                 if (picked.size >= MAX_PHOTOS) toast("Up to $MAX_PHOTOS photos per message.") else runCatching {
@@ -267,6 +289,13 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                 repo.send(session.id, draft.trim(), picked.toList())
                 draft = ""; picked.clear()
             }
+        }
+    }
+    pdf?.let { uri ->
+        PdfDialog(uri, onDismiss = { pdf = null }) { info, from, to ->
+            pdf = null
+            repo.sendPdf(session.id, uri, info.name, from, to, draft.trim())
+            draft = ""
         }
     }
 }
@@ -366,7 +395,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         item {
             if (spoken.isNotEmpty() && reading == null) Row(
                 Modifier.padding(bottom = 12.dp).clip(RoundedCornerShape(999.dp)).border(1.dp, C.G200, RoundedCornerShape(999.dp))
-                    .clickable(role = Role.Button) { reader.play(session.id, spoken) }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+                    .clickable(role = Role.Button) { reader.play(session.id, session.title, spoken) }.padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.Speaker, null, tint = C.Ink, modifier = Modifier.size(18.dp))
                 Text("Listen to notes", style = ts(14, 600))
@@ -385,9 +414,10 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         sections.forEach { (section, points) ->
             item(key = "h" + section.id) {
                 val now = nowKey == "h:" + section.id
-                Text(section.title, style = ts(16, 700), modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
+                Text(section.title, style = ts(16, 700).copy(textDecoration = if (section.important) TextDecoration.Underline else null),
+                    modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
                     .clip(RoundedCornerShape(6.dp)).background(if (now) C.BlueBg else androidx.compose.ui.graphics.Color.Transparent)
-                    .then(if (reading != null) Modifier.clickable { spoken.indexOfFirst { it.key == "h:" + section.id }.takeIf { it >= 0 }?.let { reader.play(session.id, spoken, it) } } else Modifier)
+                    .then(if (reading != null) Modifier.clickable { spoken.indexOfFirst { it.key == "h:" + section.id }.takeIf { it >= 0 }?.let { reader.play(session.id, session.title, spoken, it) } } else Modifier)
                     .padding(horizontal = if (now) 6.dp else 0.dp))
             }
             items(points, key = { section.id + it.bullet.id }) { p ->
@@ -395,14 +425,24 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                 val isSel = selected == key
                 val from = if (p.link != null) snap.sessions.firstOrNull { s -> snap.section(p.bullet.sectionId)?.sessionId == s.id } else null
                 val now = nowKey == key
+                val mark = highlightColor(p.bullet.highlight)
+                val toggle = { selected = if (isSel) null else key }
                 Column(Modifier.fillMaxWidth()) {
-                    if (p.bullet.isDiagram) MermaidDiagram(p.bullet.content, Modifier.padding(vertical = 6.dp), onLabel = { selected = if (isSel) null else key })
-                    else Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
+                    if (p.bullet.isDiagram || p.bullet.isCode || p.bullet.isTable) Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(mark ?: androidx.compose.ui.graphics.Color.Transparent)
+                            .padding(horizontal = if (mark != null) 6.dp else 0.dp)) {
+                        when {
+                            p.bullet.isDiagram -> MermaidDiagram(p.bullet.content, onLabel = toggle)
+                            p.bullet.isCode -> CodeBlock(p.bullet.content, p.bullet.lang, onLabel = toggle)
+                            else -> NoteTable(p.bullet.content, onLabel = toggle)
+                        }
+                    }
+                    else Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (now) C.BlueBg else mark ?: if (isSel) C.G100 else androidx.compose.ui.graphics.Color.Transparent)
                         .clickable { selected = if (isSel) null else key }.padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(Modifier.padding(top = 8.dp).size(7.dp).clip(CircleShape).background(if (p.bullet.dateAdded >= weekAgo) C.BlueDot else C.G300))
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(p.bullet.content, style = ts(15, 400, C.Ink, 1.45f))
+                            Text(p.bullet.content, style = ts(15, 400, C.Ink, 1.45f).copy(textDecoration = if (p.bullet.important) TextDecoration.Underline else null))
                             if (from != null) Row(Modifier.clip(RoundedCornerShape(6.dp)).background(C.PurpleBg).clickable { onOpenSession(from.id) }.padding(horizontal = 7.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Icon(Ic.Link, null, tint = C.Purple, modifier = Modifier.size(12.dp))
@@ -410,7 +450,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                             }
                         }
                     }
-                    if (isSel) Row(Modifier.fillMaxWidth().padding(start = 25.dp, end = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (isSel) Column(Modifier.fillMaxWidth().padding(start = 25.dp, end = 0.dp)) {
                         val origin = when {
                             from != null -> "from ${from.title}"
                             p.bullet.originSessionId == session.id || p.bullet.originSessionId.isEmpty() -> "this session"
@@ -419,9 +459,25 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                         val also = if (p.link == null) linkedElsewhere[p.bullet.id].orEmpty()
                             .mapNotNull { l -> snap.session(snap.section(l.sectionId)?.sessionId)?.title }.distinct() else emptyList()
                         Text("Added ${weekDate(p.bullet.dateAdded)} · $origin" + if (also.isEmpty()) "" else " · also in ${also.joinToString(", ")}",
-                            style = ts(12, 400, C.G500), modifier = Modifier.weight(1f))
-                        IconBtn(Ic.Edit, "Edit point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { editing = p }
-                        IconBtn(Ic.Trash, if (p.link != null) "Remove from this topic" else "Delete point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { deleting = p }
+                            style = ts(12, 400, C.G500), modifier = Modifier.padding(top = 4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Swatch(C.HighlightYellow, "Highlight yellow", p.bullet.highlight == "yellow") {
+                                run.go { repo.setHighlight(p.bullet.id, if (p.bullet.highlight == "yellow") null else "yellow") }
+                            }
+                            Swatch(C.HighlightRed, "Highlight red", p.bullet.highlight == "red") {
+                                run.go { repo.setHighlight(p.bullet.id, if (p.bullet.highlight == "red") null else "red") }
+                            }
+                            if (!p.bullet.isDiagram && !p.bullet.isCode && !p.bullet.isTable) Box(
+                                Modifier.size(40.dp).clip(CircleShape).clickable(role = Role.Switch) { run.go { repo.setImportant(p.bullet.id, !p.bullet.important) } }
+                                    .semantics { contentDescription = if (p.bullet.important) "Remove underline" else "Underline as important" },
+                                contentAlignment = Alignment.Center) {
+                                Text("U", style = ts(15, if (p.bullet.important) 700 else 500, if (p.bullet.important) C.Ink else C.G500)
+                                    .copy(textDecoration = TextDecoration.Underline))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            IconBtn(Ic.Edit, "Edit point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { editing = p }
+                            IconBtn(Ic.Trash, if (p.link != null) "Remove from this topic" else "Delete point", tint = C.G500, size = 40.dp, iconSize = 16.dp) { deleting = p }
+                        }
                     }
                 }
             }
@@ -429,7 +485,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
     }
 
     editing?.let { p ->
-        TextPrompt(if (p.bullet.isDiagram) "Edit diagram code" else "Edit point", p.bullet.content, "Save", singleLine = false, onDismiss = { editing = null }) { text ->
+        TextPrompt(when { p.bullet.isDiagram -> "Edit diagram code"; p.bullet.isCode -> "Edit code"; p.bullet.isTable -> "Edit table (Markdown)"; else -> "Edit point" }, p.bullet.content, "Save", singleLine = false, onDismiss = { editing = null }) { text ->
             editing = null
             run.go { repo.editBullet(p.bullet.id, text) }
         }
@@ -438,7 +494,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         if (p.link != null) Confirm("Remove from this topic?", "The point stays in the session it came from.", "Remove", onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.unlink(p.link.id) }
-        } else Confirm(if (p.bullet.isDiagram) "Delete this diagram?" else "Delete this point?", "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
+        } else Confirm(when { p.bullet.isDiagram -> "Delete this diagram?"; p.bullet.isCode -> "Delete this code block?"; p.bullet.isTable -> "Delete this table?"; else -> "Delete this point?" }, "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.deleteBullet(p.bullet.id) }
         }
@@ -469,5 +525,75 @@ private fun ReaderBar(reader: NotesReader, state: ReaderState) {
         Box(Modifier.padding(top = 8.dp, end = 8.dp).fillMaxWidth().height(3.dp).clip(CircleShape).background(C.G700)) {
             Box(Modifier.fillMaxWidth(progress).height(3.dp).clip(CircleShape).background(C.White))
         }
+    }
+}
+
+
+/** Pick which pages of a PDF become notes. They are sent 10 pages per message. */
+@Composable
+private fun PdfDialog(uri: Uri, onDismiss: () -> Unit, onSend: (Pdf.Info, Int, Int) -> Unit) {
+    val context = LocalContext.current
+    var info by remember { mutableStateOf<Pdf.Info?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var fromText by remember { mutableStateOf("1") }
+    var toText by remember { mutableStateOf("") }
+    LaunchedEffect(uri) {
+        runCatching { withContext(Dispatchers.IO) { Pdf.info(context, uri) } }
+            .onSuccess { info = it; toText = minOf(it.pages, Pdf.PAGES_PER_MESSAGE).toString() }
+            .onFailure { error = it.message ?: "This file could not be read as a PDF." }
+    }
+    val pages = info?.pages ?: 0
+    val from = fromText.toIntOrNull()
+    val to = toText.toIntOrNull()
+    val problem = when {
+        info == null -> null
+        from == null || to == null || from < 1 || to > pages || from > to -> "Choose pages between 1 and $pages."
+        to - from + 1 > Pdf.MAX_PAGES -> "Up to ${Pdf.MAX_PAGES} pages at a time."
+        else -> null
+    }
+    val count = if (problem == null && from != null && to != null) to - from + 1 else 0
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = C.White,
+        title = { Text(info?.name ?: "PDF", style = ts(18, 600), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    error != null -> Text(error!!, style = ts(14, 400, C.Red, 1.45f))
+                    info == null -> Text("Opening…", style = ts(14, 400, C.G600))
+                    else -> {
+                        Text("${plural(pages, "page")}. Choose the pages to make notes from.", style = ts(14, 400, C.G600, 1.45f))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(fromText, { fromText = it.filter(Char::isDigit).take(4) }, label = { Text("From") }, singleLine = true,
+                                textStyle = ts(16), modifier = Modifier.weight(1f),
+                                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                            OutlinedTextField(toText, { toText = it.filter(Char::isDigit).take(4) }, label = { Text("To") }, singleLine = true,
+                                textStyle = ts(16), modifier = Modifier.weight(1f),
+                                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                        }
+                        Text(problem ?: if (count <= Pdf.PAGES_PER_MESSAGE) "Sent as one message."
+                            else "Sent as ${(count + Pdf.PAGES_PER_MESSAGE - 1) / Pdf.PAGES_PER_MESSAGE} messages of up to ${Pdf.PAGES_PER_MESSAGE} pages, one after another.",
+                            style = ts(13, 400, if (problem != null) C.Red else C.G600, 1.45f))
+                        Text("Pages are turned into images on this phone and read by your notes model.", style = ts(12, 400, C.G500, 1.4f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSend(info!!, from!!, to!!) }, enabled = info != null && problem == null && count > 0) {
+                Text(if (count > 0) "Make notes from ${plural(count, "page")}" else "Make notes", style = ts(15, 600))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", style = ts(15, 500, C.G600)) } },
+    )
+}
+
+
+/** A highlight colour choice; a ring shows the one that is on. Tap again to clear. */
+@Composable
+private fun Swatch(color: androidx.compose.ui.graphics.Color, label: String, on: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(40.dp).clip(CircleShape).clickable(role = Role.Switch, onClick = onClick).semantics { contentDescription = label },
+        contentAlignment = Alignment.Center) {
+        Box(Modifier.size(20.dp).clip(CircleShape).background(color)
+            .then(if (on) Modifier.border(2.dp, C.Ink, CircleShape) else Modifier.border(1.dp, C.G300, CircleShape)))
     }
 }

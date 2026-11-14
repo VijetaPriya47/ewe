@@ -60,7 +60,7 @@ serve(async (req, body) => {
   const payload = toApplyPayload(type, output as never, refs);
   const result = must(await db.rpc("apply_notes", {
     p_session_id: sessionId, p_message_id: msg.id, p_payload: payload, p_today: localDate,
-  })) as { new_bullets: number; new_diagrams: number; new_sections: number; sections: never[] };
+  })) as { new_bullets: number; new_diagrams: number; new_tables: number; new_code: number; new_sections: number; sections: never[] };
 
   const summary = summarize(result, Math.max(0, Number(output?.skipped_duplicates) || 0));
   must(await db.from("messages").insert({ session_id: sessionId, role: "assistant", content: summary }).select("id").single());

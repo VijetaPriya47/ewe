@@ -107,6 +107,46 @@ class LogicTest {
         assertEquals(3, Planner.due(snap, LocalDate.parse("2026-11-12"), 2).size) // skipped days carry over
     }
 
+    @Test fun `tables are read row by row, code is skipped`() {
+        val md = "| Level | Clues | Time |\n| --- | :---: | ---: |\n| Easy | 36 | 5 min |\n| Hard | 22 | |"
+        val t = app.ewe.data.Rich.parseTable(md)!!
+        assertEquals(listOf("Level", "Clues", "Time"), t.header)
+        assertEquals(listOf(listOf("Easy", "36", "5 min"), listOf("Hard", "22", "")), t.rows)
+        assertEquals("Easy: Clues 36, Time 5 min. Hard: Clues 22.", app.ewe.data.Rich.tableAsText(md))
+        assertEquals(null, app.ewe.data.Rich.parseTable("just | one line"))
+        assertEquals(listOf("a", "b|c"), app.ewe.data.Rich.parseTable("| a | b\\|c |\n|---|---|")!!.header)
+
+        val rich = snap.copy(bullets = snap.bullets +
+            Bullet("t1", "c1", md, 1.6, "2026-11-08", "cdn", kind = "table") +
+            Bullet("k1", "c1", "curl -I https://cdn.example", 1.7, "2026-11-08", "cdn", kind = "code", lang = "bash"))
+        val notes = Planner.due(rich, LocalDate.parse("2026-11-10"), 2).first { it.scheduleId == "r1" }.notes
+        assertEquals(listOf("TTL = how long edge keeps a copy", "Easy: Clues 36, Time 5 min. Hard: Clues 22."), notes)
+        val lines = app.ewe.podcast.NotesReader.lines(rich, "cdn").map { it.key }
+        assertTrue("c1t1" in lines && "c1k1" !in lines)
+    }
+
+    @Test fun `PDF pages are split into messages of ten`() {
+        assertEquals(listOf(1..10, 11..20, 21..23), app.ewe.data.Pdf.chunks(1, 23))
+        assertEquals(listOf(5..5), app.ewe.data.Pdf.chunks(5, 5))
+        assertEquals("pages 11–20", app.ewe.data.Pdf.pagesLabel(11, 20))
+        assertEquals("page 7", app.ewe.data.Pdf.pagesLabel(7, 7))
+    }
+
+    @Test fun `plain episode without AI fades detail and announces topics`() {
+        val items = listOf(
+            DueItem("a", "cdn", "CDN", "Basics", 1.0, "2026-11-01", 1, 1, Level.DETAILED, listOf("CDN = servers near users", "Lower latency")),
+            DueItem("b", "cdn", "CDN", "Edge", 2.0, "2026-11-01", 1, 7, Level.HEADLINES, listOf("one two three four five six seven eight nine ten", "eleven twelve", "never read again ok")),
+            DueItem("c", "http", "HTTP Caching", "Headers", 1.0, "2026-11-01", 1, 3, Level.SHORTER, listOf("max-age → freshness")),
+        )
+        val plan = Planner.plan(items, 30)
+        val s = Script.plain(plan)
+        assertEquals(3, s.segments.size)
+        assertTrue(s.intro.contains("3 sections"))
+        assertEquals("Now, CDN. Basics. CDN is servers near users. Lower latency.", s.segments[0])
+        assertTrue(s.segments[1].startsWith("Edge. one two") && !s.segments[1].contains("Now,") && !s.segments[1].contains("never read"))
+        assertEquals("Now, HTTP Caching. Headers. max-age leads to freshness.", s.segments[2])
+    }
+
     @Test fun `diagrams stay out of the podcast and the read-aloud`() {
         val withDiagram = snap.copy(bullets = snap.bullets + Bullet("d1", "c1", "flowchart TD\n  A --> B", 1.5, "2026-11-08", "cdn", kind = "mermaid"))
         val r1 = Planner.due(withDiagram, LocalDate.parse("2026-11-10"), 2).first { it.scheduleId == "r1" }

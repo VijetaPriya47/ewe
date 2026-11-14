@@ -27,7 +27,10 @@ export function renderPreviousNotes(sections: ExistingSection[], withRefs: boole
     s.bullets.forEach((b, j) => {
       const bRef = `${sRef}.${j + 1}`;
       refs.bulletByRef.set(bRef, b.id);
-      const text = b.kind === "mermaid" ? `(diagram already drawn: ${diagramSummary(b.content)})` : b.content;
+      const text = b.kind === "mermaid" ? `(diagram already drawn: ${diagramSummary(b.content)})`
+        : b.kind === "code" ? `(code block: ${diagramSummary(b.content)})`
+        : b.kind === "table" ? `(table: ${diagramSummary(b.content.replace(/\n/g, " ; "))})`
+        : b.content;
       lines.push(withRefs ? `- [${bRef}] ${text}` : `- ${text}`);
     });
   });
@@ -43,6 +46,16 @@ function diagramSummary(code: string): string {
 /** Models sometimes wrap code in fences or add a language tag; keep only the Mermaid code. */
 export function cleanMermaid(text: string): string {
   return text.trim().replace(/^```(?:mermaid)?\s*\n?/i, "").replace(/\n?```\s*$/, "").trim();
+}
+
+/** Code without surrounding fences, keeping its indentation. */
+export function cleanCode(text: string): string {
+  return text.replace(/^\s*```[\w+#.-]*[ \t]*\n?/, "").replace(/\n?```\s*$/, "").replace(/^\s*\n/, "").replace(/\s+$/, "");
+}
+
+/** A Markdown table needs at least a header row and one more row of pipes; otherwise it is plain text. */
+export function isTable(text: string): boolean {
+  return text.trim().split("\n").filter((l) => l.trim().startsWith("|") || l.split("|").length > 2).length >= 2;
 }
 
 const COMMON_RULES = `
@@ -67,7 +80,21 @@ const COMMON_RULES = `
 - Use "→" for cause/effect, "vs" for comparisons, "e.g." for examples.
 - If text is unreadable, skip it — never guess.
 - If the NEW CONTENT has nothing new, return "sections": [].
-- Every ordinary bullet has "kind": "text".
+- Every ordinary bullet has "kind": "text" and "lang": "".
+
+# CODE AND TABLES
+- Code, commands, queries or config in the NEW CONTENT: keep them as ONE bullet with "kind": "code",
+  "text" = the code exactly as written (keep indentation and line breaks, no \`\`\` fences),
+  "lang" = its language in lowercase (e.g. "python", "sql", "bash"), or "" if unknown. Never paraphrase code.
+- A table in the NEW CONTENT, or several items compared on the same attributes: ONE bullet with
+  "kind": "table", "text" = a Markdown table (header row, then "| --- |" row, then one row per item).
+  Short cells. A table may hold those points instead of repeating them as text bullets.
+- "lang" is "" for every bullet that is not code.
+
+# IMPORTANT POINTS
+- Set "important": true on the few bullets that matter most: key definitions, core rules, numbers or
+  facts to remember, likely exam points. About 1 in 5 bullets at most; all others false.
+- Set a group's "important": true only when the whole sub-topic is central to the material.
 
 # DIAGRAMS (optional — most uploads need none)
 - Add a diagram only when the NEW CONTENT shows a figure, or describes a process, flow, sequence,
@@ -132,22 +159,28 @@ ${opts.images.length ? `[${opts.images.length} image(s) attached below]\n` : ""}
 export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<string, unknown> {
   const bullet: Record<string, unknown> = {
     type: "object", additionalProperties: false,
-    properties: { kind: { type: "string", enum: ["text", "mermaid"] }, text: { type: "string" } }, required: ["kind", "text"],
+    properties: {
+      kind: { type: "string", enum: ["text", "mermaid", "code", "table"] },
+      text: { type: "string" },
+      lang: { type: "string" },
+      important: { type: "boolean" },
+    },
+    required: ["kind", "text", "lang", "important"],
   };
   const group: Record<string, unknown> = {
     type: "object", additionalProperties: false,
-    properties: { title: { type: "string" }, bullets: { type: "array", items: bullet } },
-    required: ["title", "bullets"],
+    properties: { title: { type: "string" }, important: { type: "boolean" }, bullets: { type: "array", items: bullet } },
+    required: ["title", "important", "bullets"],
   };
 
   if (sessionType === "topic") {
     const bRefs = [...refs.bulletByRef.keys()], sRefs = [...refs.sectionByRef.keys()];
     (bullet.properties as Record<string, unknown>).insert_after =
       bRefs.length <= MAX_ENUM ? { type: "string", enum: ["END", ...bRefs] } : { type: "string" };
-    bullet.required = ["kind", "text", "insert_after"];
+    bullet.required = ["kind", "text", "lang", "important", "insert_after"];
     (group.properties as Record<string, unknown>).target =
       sRefs.length <= MAX_ENUM ? { type: "string", enum: ["NEW", ...sRefs] } : { type: "string" };
-    group.required = ["target", "title", "bullets"];
+    group.required = ["target", "title", "important", "bullets"];
   }
 
   return {
@@ -157,8 +190,21 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
   };
 }
 
-interface ModelBullet { kind?: string; text?: string; insert_after?: string }
-interface ModelGroup { target?: string; title?: string; bullets?: ModelBullet[] }
+interface ModelBullet { kind?: string; text?: string; lang?: string; important?: boolean; insert_after?: string }
+interface ModelGroup { target?: string; title?: string; important?: boolean; bullets?: ModelBullet[] }
+
+type Kind = "text" | "mermaid" | "code" | "table";
+
+/** The kind and the cleaned text of one model bullet; an unusable table becomes plain text. */
+function normalise(b: ModelBullet): { kind: Kind; text: string } {
+  const raw = String(b.text ?? "");
+  switch (b.kind) {
+    case "mermaid": return { kind: "mermaid", text: cleanMermaid(raw) };
+    case "code": return { kind: "code", text: cleanCode(raw) };
+    case "table": return isTable(raw) ? { kind: "table", text: raw.trim() } : { kind: "text", text: raw.trim() };
+    default: return { kind: "text", text: raw.trim() };
+  }
+}
 
 /** Convert the model's ref-based answer into the payload apply_notes() expects. */
 export function toApplyPayload(sessionType: SessionType, output: { sections?: ModelGroup[] }, refs: RefMaps) {
@@ -168,33 +214,46 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
       return {
         section_id: sectionId,
         title: String(g.title ?? ""),
+        important: g.important === true,
         bullets: (g.bullets ?? [])
-          .filter((b) => typeof b?.text === "string" && (b.kind === "mermaid" ? cleanMermaid(b.text) : b.text.trim()).length > 0)
+          .filter((b) => typeof b?.text === "string")
           .map((b) => {
             // only honour anchors that live in the chosen section
             const inSection = sectionId && b.insert_after?.startsWith(`${g.target}.`);
             const anchor = inSection ? refs.bulletByRef.get(b.insert_after!) ?? null : null;
-            const kind = b.kind === "mermaid" ? "mermaid" : "text";
-            return { kind, text: kind === "mermaid" ? cleanMermaid(b.text!) : b.text!.trim(), after_bullet_id: anchor };
-          }),
+            const { kind, text } = normalise(b);
+            return {
+              kind, text, after_bullet_id: anchor, important: b.important === true,
+              ...(kind === "code" ? { lang: String(b.lang ?? "").trim().toLowerCase() } : {}),
+            };
+          })
+          .filter((b) => b.text.trim().length > 0),
       };
     }).filter((s) => s.bullets.length > 0),
   };
 }
 
-interface AppliedSection { title: string; is_new: boolean; added: number; inline: number; diagrams?: number }
+interface AppliedSection { title: string; is_new: boolean; added: number; inline: number; diagrams?: number; tables?: number; code?: number }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
-/** The short chat reply. **bold** is rendered by the app. Diagrams are counted apart from points. */
-export function summarize(result: { new_bullets: number; new_diagrams?: number; sections: AppliedSection[] }, skipped: number): string {
+/** The short chat reply. **bold** is rendered by the app. Diagrams, tables and code are counted apart from points. */
+export function summarize(
+  result: { new_bullets: number; new_diagrams?: number; new_tables?: number; new_code?: number; sections: AppliedSection[] },
+  skipped: number,
+): string {
   const skippedLine = skipped > 0 ? `\n${plural(skipped, "point")} skipped: already in your notes.` : "";
-  const diagrams = result.new_diagrams ?? 0;
-  const points = result.new_bullets - diagrams;
   if (result.new_bullets === 0) return "Nothing new here — your notes already cover this.";
+  const extras = (s: { diagrams?: number; tables?: number; code?: number }) =>
+    [[s.diagrams ?? 0, "diagram"], [s.tables ?? 0, "table"], [s.code ?? 0, "code block"]] as [number, string][];
+  const extraTotal = (s: { diagrams?: number; tables?: number; code?: number }) => extras(s).reduce((n, [k]) => n + k, 0);
 
-  const what = [points > 0 ? `**${plural(points, "point")}**` : "", diagrams > 0 ? `**${plural(diagrams, "diagram")}**` : ""]
-    .filter(Boolean).join(" and ");
+  const total = { diagrams: result.new_diagrams, tables: result.new_tables, code: result.new_code };
+  const points = result.new_bullets - extraTotal(total);
+  const parts = [points > 0 ? `**${plural(points, "point")}**` : "",
+    ...extras(total).filter(([n]) => n > 0).map(([n, w]) => `**${plural(n, w)}**`)].filter(Boolean);
+  const what = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+
   const secs = result.sections;
   const allNew = secs.every((s) => s.is_new);
   let line: string;
@@ -203,8 +262,8 @@ export function summarize(result: { new_bullets: number; new_diagrams?: number; 
       secs.map((s) => `**${s.title}**`).join(", ") + ".";
   } else {
     const bits = secs.map((s) => {
-      const n = s.added - (s.diagrams ?? 0);
-      const d = s.diagrams ? ` + ${plural(s.diagrams, "diagram")}` : "";
+      const n = s.added - extraTotal(s);
+      const d = extras(s).filter(([k]) => k > 0).map(([k, w]) => ` + ${plural(k, w)}`).join("");
       if (s.is_new) return `${n} in a new section **${s.title}**${d}`;
       if (n > 0 && s.inline === n) return `${n} inline in **${s.title}**${d}`;
       if (s.inline === 0 || n === 0) return `${n} in **${s.title}**${d}`;

@@ -10,10 +10,8 @@ import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -51,7 +49,8 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val synced = repo.refresh()
             val settings = repo.settings
             if (!settings.podcastEnabled) return Result.success()
-            if (!synced && nightly) return Result.retry()
+            // Offline at night: wait a little for the network, then carry on with the copy on the phone.
+            if (!synced && nightly && runAttemptCount < RETRIES) return Result.retry()
 
             val store = EpisodeStore.get(applicationContext)
             val today = repo.today()
@@ -67,10 +66,19 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val plan = Planner.plan(items, settings.podcastTargetMinutes)
 
             stage("Writing the script…")
+            // Without a working AI the episode is still made: the due notes are read as they are.
             val cfg = repo.prefs.cfg(settings.podcastProvider, settings.podcastModel)
-                ?: return fail("Pick a podcast model in Settings and add its key.")
-            val out = Providers().generateJson(cfg, Script.SYSTEM, Script.userMessage(plan, today), Script.schema(plan), "episode")
-            val script = Script.parse(out, plan)
+            var plainReason: String? = null
+            val script = if (cfg == null) {
+                plainReason = "No podcast model is set up in Settings."
+                Script.plain(plan)
+            } else try {
+                Script.parse(Providers().generateJson(cfg, Script.SYSTEM, Script.userMessage(plan, today), Script.schema(plan), "episode"), plan)
+            } catch (e: Exception) {
+                if (nightly && runAttemptCount < RETRIES) return Result.retry()
+                plainReason = "The AI script could not be written: ${e.message?.lineSequence()?.firstOrNull() ?: "unknown error"}"
+                Script.plain(plan)
+            }
 
             val dir = store.dir(today)
             dir.listFiles { f -> f.extension == "wav" }?.forEach { it.delete() }
@@ -97,12 +105,13 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 speech.stop()
             }
 
-            val episode = Episode(today.toString(), System.currentTimeMillis(), settings.podcastTargetMinutes, chapters, plan.deferred.size)
+            val episode = Episode(today.toString(), System.currentTimeMillis(), settings.podcastTargetMinutes, chapters, plan.deferred.size,
+                plain = plainReason != null, plainReason = plainReason)
             store.save(episode)
             if (nightly) notifyReady(episode)
             return Result.success()
         } catch (e: Exception) {
-            return if (nightly && runAttemptCount < 3) Result.retry() else fail(e.message ?: "Could not prepare the podcast.")
+            return if (nightly && runAttemptCount < RETRIES) Result.retry() else fail(e.message ?: "Could not prepare the podcast.")
         }
     }
 
@@ -121,19 +130,20 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val n = NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Today's revision is ready")
-            .setContentText("${e.sections.size} sections · about ${(e.durationMs / 60000).coerceAtLeast(1)} min · plays offline")
+            .setContentText("${e.sections.size} sections · about ${(e.durationMs / 60000).coerceAtLeast(1)} min" + if (e.plain) " · plain reading (no AI)" else " · plays offline")
             .setContentIntent(open).setAutoCancel(true).build()
         runCatching { NotificationManagerCompat.from(ctx).notify(1, n) }
     }
 
     companion object {
+        /** Night runs wait for the network/AI this many times (10 min apart) before reading notes plainly. */
+        private const val RETRIES = 2
         const val KEY_NIGHTLY = "nightly"
         const val KEY_STAGE = "stage"
         const val KEY_ERROR = "error"
         const val NIGHTLY = "podcast-nightly"
         const val NOW = "podcast-now"
         private const val CHANNEL = "revision"
-        private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
         /** (Re)schedules the nightly run, or cancels it when the podcast is off. */
         fun schedule(context: Context, repo: Repository, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
@@ -147,14 +157,14 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             wm.enqueueUniqueWork(NIGHTLY, policy,
                 OneTimeWorkRequestBuilder<PrepareWorker>()
                     .setInitialDelay(Duration.between(now, next))
-                    .setConstraints(online)
+                    .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR, Duration.ofMinutes(10))
                     .setInputData(workDataOf(KEY_NIGHTLY to true))
                     .build())
         }
 
         fun prepareNow(context: Context) {
             WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP,
-                OneTimeWorkRequestBuilder<PrepareWorker>().setConstraints(online).build())
+                OneTimeWorkRequestBuilder<PrepareWorker>().build())
         }
     }
 }

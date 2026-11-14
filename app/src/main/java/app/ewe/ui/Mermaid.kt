@@ -51,42 +51,30 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 @Composable
 fun MermaidDiagram(code: String, modifier: Modifier = Modifier, onLabel: (() -> Unit)? = null) {
-    val toast = LocalToast.current
-    val context = LocalContext.current
     // Height reported by the page, in CSS pixels (= dp in a WebView at its default scale).
     var heightCss by remember(code) { mutableIntStateOf(0) }
     var error by remember(code) { mutableStateOf<String?>(null) }
     var showCode by remember(code) { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
 
-    Column(modifier.fillMaxWidth().clip(shape).border(1.dp, C.G200, shape).background(C.White)) {
-        if (error == null && !showCode) {
-            AndroidView(
-                factory = { ctx -> diagramWebView(ctx, onHeight = { heightCss = it }, onError = { error = it }) },
-                update = { web -> web.tag.let { if (it != code) { web.tag = code; web.draw(code) } } },
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-                    .height(if (heightCss > 0) heightCss.dp else 120.dp)
-                    .semantics { contentDescription = "Diagram" },
-            )
-        } else {
-            if (error != null) Text("Couldn't draw this diagram: $error", style = ts(12, 400, C.Amber, 1.4f),
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp))
-            Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp)) {
-                Text(code, style = ts(12, 400, C.G700, 1.45f).copy(fontFamily = FontFamily.Monospace), softWrap = false)
-            }
-        }
-        // the subtle bar: label + view code + copy
-        Row(Modifier.fillMaxWidth().background(C.G50).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Diagram · Mermaid", style = ts(11, 500, C.G500), modifier = Modifier.weight(1f)
-                .then(if (onLabel != null) Modifier.clickable(onClick = onLabel) else Modifier).padding(vertical = 10.dp))
+    Box(modifier) {
+        ExtraFrame("Diagram · Mermaid", "Diagram code", code, onLabel, barExtras = {
             if (error == null) Text(if (showCode) "Diagram" else "Code", style = ts(11, 500, C.G500),
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button) { showCode = !showCode }.padding(horizontal = 8.dp, vertical = 10.dp))
-            Row(Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button) {
-                    copyText(context, "Mermaid diagram", code); toast("Diagram code copied")
-                }.semantics { contentDescription = "Copy diagram code" }.padding(horizontal = 8.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(Ic.Copy, null, tint = C.G500, modifier = Modifier.size(13.dp))
-                Text("Copy", style = ts(11, 500, C.G500))
+        }) {
+            if (error == null && !showCode) {
+                AndroidView(
+                    factory = { ctx -> diagramWebView(ctx, onHeight = { heightCss = it }, onError = { error = it }) },
+                    update = { web -> web.tag.let { if (it != code) { web.tag = code; web.draw(code) } } },
+                    modifier = Modifier.fillMaxWidth().padding(8.dp)
+                        .height(if (heightCss > 0) heightCss.dp else 120.dp)
+                        .semantics { contentDescription = "Diagram" },
+                )
+            } else Column {
+                if (error != null) Text("Couldn't draw this diagram: $error", style = ts(12, 400, C.Amber, 1.4f),
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp))
+                Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp)) {
+                    Text(code, style = ts(12, 400, C.G700, 1.45f).copy(fontFamily = FontFamily.Monospace), softWrap = false)
+                }
             }
         }
     }

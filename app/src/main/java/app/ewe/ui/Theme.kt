@@ -38,6 +38,8 @@ object C {
     val Amber = Color(0xFF92400E)
     val AmberBg = Color(0xFFFFFBEB)
     val Mark = Color(0xFFFEF3C7)
+    val HighlightYellow = Color(0xFFFEF08A)
+    val HighlightRed = Color(0xFFFECACA)
 }
 
 @OptIn(ExperimentalTextApi::class)

@@ -88,7 +88,13 @@ asks for an email and password. Then open Settings, add a provider key and pick 
   diagram as an extra bullet (`kind = 'mermaid'`). The app draws it with the bundled Mermaid
   library (offline) and offers Copy / Code. Text bullets still carry every point.
 - **Listen to notes**: any session's notes can be read aloud on the phone (Android text-to-speech,
-  no AI), with the current line highlighted, section skipping and speed control.
+  no AI), with the current line highlighted, section skipping and speed control, plus lock-screen
+  and headphone controls.
+- **Rich notes**: besides points and diagrams, the AI keeps code exactly (`kind = 'code'`) and turns
+  tables into Markdown tables (`kind = 'table'`), and underlines key points (`important`). You can
+  highlight any point yellow or red.
+- **PDFs**: chosen pages are rendered to images on the phone and sent 10 per message.
+- **Podcast without AI**: if the script can't be written, the episode reads the due notes plainly.
 - **Search** runs on the phone's offline copy (keywords). When the index is complete, sections
   found by meaning are added below ("hybrid").
 - **Podcast**: each batch of notes (a section + the day it was added) has its own schedule:

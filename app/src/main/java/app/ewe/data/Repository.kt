@@ -38,8 +38,26 @@ sealed interface SyncState {
     data class Failed(val message: String) : SyncState
 }
 
-/** An upload that is being turned into notes, or one that failed and can be retried. */
-data class Upload(val text: String, val images: List<Uri>, val stage: String, val error: String? = null)
+/** One chat message to send: text and up to 10 images. */
+data class Batch(val text: String, val images: List<Uri>)
+
+/**
+ * An upload that is being turned into notes, or one that failed and can be retried.
+ * A PDF becomes several batches (10 pages each); [batches] holds those still to send.
+ */
+data class Upload(
+    val batches: List<Batch>,
+    val stage: String,
+    val error: String? = null,
+    val total: Int = batches.size,
+    val pdfDir: File? = null,
+) {
+    val text: String get() = batches.firstOrNull()?.text.orEmpty()
+    val images: List<Uri> get() = batches.flatMap { it.images }
+    /** Only a single plain message can go back into the composer to be edited. */
+    val editable: Boolean get() = pdfDir == null && batches.size == 1
+    val done: Int get() = total - batches.size
+}
 
 data class RebuildProgress(val remaining: Int, val total: Int, val error: String? = null)
 
@@ -150,8 +168,8 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             flushPendingListened()
             val s = coroutineScope {
                 val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at") }
-                val sections = async { api.selectAll("sections", "id,session_id,title,position") }
-                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,position,date_added,origin_session_id,origin_message_id") }
+                val sections = async { api.selectAll("sections", "id,session_id,title,position,important") }
+                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
                 val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at") }
                 val schedule = async { api.selectAll("revision_schedule", "id,section_id,added_date,interval_days,revisions_done,next_due_date,last_revised") }
@@ -230,8 +248,19 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
 
     // ───────────── notes: edit and delete freely, no history ─────────────
     suspend fun editBullet(id: String, text: String) {
-        api.update("bullets", "id=eq.$id", buildJsonObject { put("content", text.trim()) })
+        // trimEnd only at the start of lines: code keeps its indentation
+        api.update("bullets", "id=eq.$id", buildJsonObject { put("content", text.trimEnd().trimStart('\n', '\r')) })
         refresh(); refreshEmbeddingsQuietly()
+    }
+
+    /** Yellow or red highlight on a point, or null to clear it. */
+    suspend fun setHighlight(id: String, color: String?) {
+        api.update("bullets", "id=eq.$id", buildJsonObject { put("highlight", color) }); refresh()
+    }
+
+    /** Underline (important) on or off. The AI sets it; you can change it. */
+    suspend fun setImportant(id: String, important: Boolean) {
+        api.update("bullets", "id=eq.$id", buildJsonObject { put("important", important) }); refresh()
     }
 
     suspend fun deleteBullet(id: String) {
@@ -244,47 +273,109 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     }
 
     // ───────────── uploads → notes ─────────────
-    fun dismissUpload(sessionId: String) = _uploads.update { it - sessionId }
+    fun dismissUpload(sessionId: String) {
+        _uploads.value[sessionId]?.pdfDir?.deleteRecursively()
+        _uploads.update { it - sessionId }
+    }
+
+    private fun busy(sessionId: String) = _uploads.value[sessionId]?.let { it.error == null } == true
 
     /** Runs outside the screen's lifetime, so leaving the chat does not cancel it. */
     fun send(sessionId: String, text: String, images: List<Uri>) {
-        if (_uploads.value[sessionId]?.error == null && _uploads.value.containsKey(sessionId)) return
-        _uploads.update { it + (sessionId to Upload(text, images, "Reading…")) }
+        if (busy(sessionId)) return
+        run(sessionId, Upload(listOf(Batch(text, images)), "Reading…"))
+    }
+
+    /** Sends whatever is left of a failed upload (for a PDF: the remaining pages). */
+    fun retry(sessionId: String) {
+        val u = _uploads.value[sessionId]?.takeIf { it.error != null } ?: return
+        run(sessionId, u.copy(error = null, stage = "Reading…"))
+    }
+
+    /**
+     * Pages [from]..[to] of a PDF: drawn as images on the phone, then sent 10 pages per message,
+     * one after another, so each message sees the notes made from the pages before it.
+     */
+    fun sendPdf(sessionId: String, uri: Uri, name: String, from: Int, to: Int, note: String) {
+        if (busy(sessionId)) return
+        val dir = File(context.cacheDir, "pdf/${System.currentTimeMillis()}")
+        val placeholder = Batch("PDF: $name, ${Pdf.pagesLabel(from, to)}", emptyList())
+        _uploads.update { it + (sessionId to Upload(listOf(placeholder), "Reading the PDF…", pdfDir = dir)) }
         scope.launch {
-            try {
-                val cfg = prefs.cfg(settings.notesProvider, settings.notesModel)
-                    ?: throw ApiException("Pick a notes model in Settings first.")
-                val bitmaps = withContext(Dispatchers.IO) { images.map { Images.load(context, it, Images.AI_MAX_SIDE) } }
-                val encoded = withContext(Dispatchers.Default) {
-                    bitmaps.map { Base64.encodeToString(Images.jpeg(it, 88), Base64.NO_WRAP) }
-                }
-                _uploads.update { it + (sessionId to Upload(text, images, "Making notes…")) }
-                val res = api.function("generate-notes", buildJsonObject {
-                    put("session_id", sessionId)
-                    put("text", text)
-                    put("local_date", today().toString())
-                    put("images", buildJsonArray { encoded.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
-                    putProvider("provider", cfg)
-                })
-                val messageId = res["user_message_id"]?.jsonPrimitive?.contentOrNull
-                if (messageId != null && settings.keepPhotoCopies && bitmaps.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        mediaDir.mkdirs()
-                        bitmaps.forEachIndexed { i, b -> File(mediaDir, "${messageId}_$i.jpg").writeBytes(Images.smallCopy(b)) }
+            val batches = try {
+                val chunks = Pdf.chunks(from, to)
+                val pages = withContext(Dispatchers.IO) {
+                    Pdf.render(context, uri, from, to, dir) { n ->
+                        _uploads.update { it + (sessionId to Upload(listOf(placeholder), "Reading page $n of $to…", pdfDir = dir)) }
                     }
-                    _mediaVersion.update { it + 1 }
                 }
-                refresh()
-                val added = res["new_bullets"]?.jsonPrimitive?.intOrNull ?: 0
-                if (messageId != null && added > 0 && linkingReady()) {
-                    _uploads.update { it + (sessionId to Upload(text, images, "Linking related notes…")) }
-                    runCatching { link(sessionId, messageId) }
-                    refresh()
+                var i = 0
+                chunks.mapIndexed { c, range ->
+                    val label = "PDF: $name, ${Pdf.pagesLabel(range.first, range.last)}"
+                    Batch(if (c == 0 && note.isNotBlank()) "$label\n\n${note.trim()}" else label, pages.subList(i, i + range.count()).also { i += range.count() })
                 }
-                _uploads.update { it - sessionId }
             } catch (e: Exception) {
-                _uploads.update { it + (sessionId to Upload(text, images, "", e.message ?: "Something went wrong.")) }
+                dir.deleteRecursively()
+                _uploads.update { it + (sessionId to Upload(listOf(placeholder), "", e.message ?: "Could not read the PDF.")) }
+                return@launch
             }
+            run(sessionId, Upload(batches, "Reading…", pdfDir = dir))
+        }
+    }
+
+    private fun run(sessionId: String, start: Upload) {
+        _uploads.update { it + (sessionId to start) }
+        val job: suspend () -> Unit = job@{
+            var u = start
+            while (u.batches.isNotEmpty()) {
+                val batch = u.batches.first()
+                val part = if (u.total > 1) " (part ${u.done + 1} of ${u.total})" else ""
+                try {
+                    sendOne(sessionId, batch) { stage -> _uploads.update { it + (sessionId to u.copy(stage = stage + part)) } }
+                } catch (e: Exception) {
+                    val sent = if (u.done > 0) "\n${u.done} of ${u.total} parts were saved; Try again sends the rest." else ""
+                    _uploads.update { it + (sessionId to u.copy(stage = "", error = (e.message ?: "Something went wrong.") + sent)) }
+                    return@job
+                }
+                u = u.copy(batches = u.batches.drop(1))
+            }
+            u.pdfDir?.deleteRecursively()
+            _uploads.update { it - sessionId }
+        }
+        scope.launch { job() }
+    }
+
+    /** One chat message → notes (→ linking). Throws on failure; nothing is half-saved. */
+    private suspend fun sendOne(sessionId: String, batch: Batch, stage: (String) -> Unit) {
+        val cfg = prefs.cfg(settings.notesProvider, settings.notesModel)
+            ?: throw ApiException("Pick a notes model in Settings first.")
+        stage("Reading…")
+        val bitmaps = withContext(Dispatchers.IO) { batch.images.map { Images.load(context, it, Images.AI_MAX_SIDE) } }
+        val encoded = withContext(Dispatchers.Default) {
+            bitmaps.map { Base64.encodeToString(Images.jpeg(it, 88), Base64.NO_WRAP) }
+        }
+        stage("Making notes…")
+        val res = api.function("generate-notes", buildJsonObject {
+            put("session_id", sessionId)
+            put("text", batch.text)
+            put("local_date", today().toString())
+            put("images", buildJsonArray { encoded.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
+            putProvider("provider", cfg)
+        })
+        val messageId = res["user_message_id"]?.jsonPrimitive?.contentOrNull
+        if (messageId != null && settings.keepPhotoCopies && bitmaps.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                mediaDir.mkdirs()
+                bitmaps.forEachIndexed { i, b -> File(mediaDir, "${messageId}_$i.jpg").writeBytes(Images.smallCopy(b)) }
+            }
+            _mediaVersion.update { it + 1 }
+        }
+        refresh()
+        val added = res["new_bullets"]?.jsonPrimitive?.intOrNull ?: 0
+        if (messageId != null && added > 0 && linkingReady()) {
+            stage("Linking related notes…")
+            runCatching { link(sessionId, messageId) }
+            refresh()
         }
     }
 

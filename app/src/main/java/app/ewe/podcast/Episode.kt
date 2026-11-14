@@ -39,6 +39,9 @@ data class Episode(
     val deferred: Int = 0,
     val heard: Set<String> = emptySet(),     // schedule ids played to the end
     val marked: Set<String> = emptySet(),    // schedule ids already "marked as listened"
+    /** True when no AI script could be made and the notes are read as they are. */
+    val plain: Boolean = false,
+    val plainReason: String? = null,
 ) {
     val durationMs: Long get() = chapters.sumOf { it.durationMs }
     val sections: List<Chapter> get() = chapters.filter { it.isSection }

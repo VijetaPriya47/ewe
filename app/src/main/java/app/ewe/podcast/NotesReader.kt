@@ -14,6 +14,7 @@ data class SpokenLine(val key: String, val text: String, val section: Int, val s
 
 data class ReaderState(
     val sessionId: String,
+    val sessionTitle: String,
     val lines: List<SpokenLine>,
     val index: Int,
     val playing: Boolean,
@@ -32,6 +33,9 @@ class NotesReader(private val context: Context) {
     private var pendingStart = false
     private val _state = MutableStateFlow<ReaderState?>(null)
     val state: StateFlow<ReaderState?> = _state
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Keeps [ReaderService] connected while reading, which gives the lock-screen and headphone controls. */
+    private var controller: com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaController>? = null
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
@@ -41,6 +45,9 @@ class NotesReader(private val context: Context) {
             tts?.let { t ->
                 val locale = Locale.getDefault().takeIf { t.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE } ?: Locale.US
                 t.language = locale
+                t.setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
             }
             if (pendingStart) { pendingStart = false; speakFromCurrent() }
         } else {
@@ -56,7 +63,7 @@ class NotesReader(private val context: Context) {
             }
             override fun onDone(utteranceId: String?) {
                 val i = utteranceId?.substringAfter('#')?.toIntOrNull() ?: return
-                _state.update { s -> if (s != null && s.playing && i == s.lines.lastIndex) null else s }
+                if (_state.value?.let { it.playing && i == it.lines.lastIndex } == true) main.post { stop() }
             }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {}
@@ -67,11 +74,12 @@ class NotesReader(private val context: Context) {
         })
     }
 
-    fun play(sessionId: String, lines: List<SpokenLine>, from: Int = 0) {
+    fun play(sessionId: String, sessionTitle: String, lines: List<SpokenLine>, from: Int = 0) {
         if (lines.isEmpty()) return
         val speed = _state.value?.speed ?: 1f
         tts?.stop()
-        _state.value = ReaderState(sessionId, lines, from.coerceIn(0, lines.lastIndex), true, speed)
+        _state.value = ReaderState(sessionId, sessionTitle, lines, from.coerceIn(0, lines.lastIndex), true, speed)
+        connectService()
         val t = engine()
         if (ready) speakFromCurrent() else pendingStart = true
         t.setSpeechRate(speed)
@@ -104,6 +112,16 @@ class NotesReader(private val context: Context) {
         if (s.playing && ready) speakFromCurrent()
     }
 
+    /** Jump to the [index]-th section that has lines (lock-screen "skip to item"). */
+    fun jumpToSectionIndex(index: Int) {
+        val s = _state.value ?: return
+        val section = s.lines.map { it.section }.distinct().getOrNull(index) ?: return
+        val target = s.lines.indexOfFirst { it.section == section }
+        tts?.stop()
+        _state.value = s.copy(index = target)
+        if (s.playing && ready) speakFromCurrent()
+    }
+
     fun cycleSpeed() {
         val s = _state.value ?: return
         val next = SPEEDS[(SPEEDS.indexOf(s.speed).takeIf { it >= 0 }?.plus(1) ?: 1) % SPEEDS.size]
@@ -116,6 +134,16 @@ class NotesReader(private val context: Context) {
         tts?.stop()
         pendingStart = false
         _state.value = null
+        controller?.let { androidx.media3.session.MediaController.releaseFuture(it) }
+        controller = null
+    }
+
+    private fun connectService() {
+        if (controller != null) return
+        controller = runCatching {
+            androidx.media3.session.MediaController.Builder(context,
+                androidx.media3.session.SessionToken(context, android.content.ComponentName(context, ReaderService::class.java))).buildAsync()
+        }.getOrNull()
     }
 
     fun clearError() { _error.value = null }
@@ -141,15 +169,16 @@ class NotesReader(private val context: Context) {
         fun get(context: Context): NotesReader =
             instance ?: synchronized(this) { instance ?: NotesReader(context.applicationContext).also { instance = it } }
 
-        /** What gets read: each section title, then its notes. Diagrams are skipped (their points are in the text). */
+        /** What gets read: each section title, then its notes and tables (row by row). Diagrams and code are skipped. */
         fun lines(snapshot: app.ewe.data.Snapshot, sessionId: String): List<SpokenLine> {
             val out = ArrayList<SpokenLine>()
             snapshot.sectionsOf(sessionId).forEachIndexed { si, section ->
-                val points = snapshot.points(section.id).filter { !it.bullet.isDiagram }
+                val points = snapshot.points(section.id).filter { it.bullet.isSpoken }
                 if (points.isEmpty()) return@forEachIndexed
                 out += SpokenLine("h:${section.id}", "${Script.speakable(section.title)}.", si, section.title)
                 points.forEach { p ->
-                    out += SpokenLine(section.id + p.bullet.id, Script.speakable(p.bullet.content).trimEnd('.') + ".", si, section.title)
+                    val text = if (p.bullet.isTable) app.ewe.data.Rich.tableAsText(p.bullet.content) else p.bullet.content
+                    out += SpokenLine(section.id + p.bullet.id, Script.speakable(text).trimEnd('.') + ".", si, section.title)
                 }
             }
             return out

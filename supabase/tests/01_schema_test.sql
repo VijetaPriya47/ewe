@@ -78,6 +78,21 @@ begin
                      and (select kind from bullets where content = 'odd kind falls back to text') = 'text', 'kinds stored');
   perform pg_temp.ok(pg_temp.fails('insert into bullets (section_id, content, kind, position, origin_session_id) select id, ''x'', ''svg'', 9, session_id from sections limit 1'), 'unknown kind rejected');
   delete from bullets where section_id in (select id from sections where title = 'Flow');
+
+  -- code blocks, tables, important, highlight
+  v_res := apply_notes(v_sud, null, '{"sections":[{"section_id":null,"title":"Code","important":true,"bullets":[
+     {"text":"Solver uses backtracking","important":true},
+     {"text":"def solve(g):\n    return g\n","kind":"code","lang":" Python "},
+     {"text":"| Level | Clues |\n| --- | --- |\n| Easy | 36 |","kind":"table","lang":"ignored"}]}]}', date '2026-11-09');
+  perform pg_temp.ok((v_res->>'new_tables')::int = 1 and (v_res->>'new_code')::int = 1
+                     and (v_res->'sections'->0->>'code')::int = 1, 'rich counts: ' || v_res::text);
+  perform pg_temp.ok((select important from sections where title = 'Code'), 'section important');
+  perform pg_temp.ok((select lang = 'python' and content = 'def solve(g):' || chr(10) || '    return g' from bullets where kind = 'code'), 'code kept, lang normalised');
+  perform pg_temp.ok((select lang is null from bullets where kind = 'table'), 'lang only for code');
+  perform pg_temp.ok((select important from bullets where content = 'Solver uses backtracking'), 'bullet important');
+  update bullets set highlight = 'yellow' where content = 'Solver uses backtracking';
+  perform pg_temp.ok(pg_temp.fails('update bullets set highlight = ''blue'' where kind = ''table'''), 'only yellow or red');
+  delete from bullets where section_id in (select id from sections where title = 'Code');
   select b.id into v_sb from bullets b join sections s on s.id = b.section_id where s.session_id = v_sud;
 
   -- linking rules

@@ -197,7 +197,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.Player(repo: Reposito
     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(C.Ink).padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Prepared " + Instant.ofEpochMilli(episode.preparedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)), style = ts(13, 400, C.G300))
-            Tag("Ready offline", C.GreenBg, C.Green, 600)
+            if (episode.plain) Tag("Plain reading", C.AmberBg, C.Amber, 600) else Tag("Ready offline", C.GreenBg, C.Green, 600)
         }
         Text("Now: ${episode.chapters.getOrNull(currentChapter)?.title.orEmpty()}", style = ts(17, 600, C.White, 1.35f), maxLines = 2, overflow = TextOverflow.Ellipsis)
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -232,6 +232,19 @@ private fun androidx.compose.foundation.layout.ColumnScope.Player(repo: Reposito
     val heard = episode.heard
     val marked = episode.marked
     LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (episode.plain) item {
+            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(12.dp)).background(C.AmberBg).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Read from your notes, without AI", style = ts(13, 700, C.Amber))
+                Text((episode.plainReason ?: "The AI script could not be made.") + " Your notes are read as they are, shortened for older sections.",
+                    style = ts(13, 400, C.Amber, 1.45f))
+                Text(if (preparing) "Trying again…" else "Try the AI script again", style = ts(13, 600, C.Blue),
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !preparing) {
+                        controller?.run { stop(); clearMediaItems() }
+                        PrepareWorker.prepareNow(context)
+                    }.padding(vertical = 4.dp))
+            }
+        }
         item { Box(Modifier.padding(bottom = 4.dp)) { Caps("In today's episode") } }
         itemsIndexed(episode.chapters) { i, ch ->
             if (ch.isSection) EpisodeRow(ch.section, "${ch.topic} · added ${weekDate(ch.addedDate)}", ch.intervalDays,

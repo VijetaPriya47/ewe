@@ -30,6 +30,8 @@ data class Section(
     @SerialName("session_id") val sessionId: String,
     val title: String,
     val position: Double = 0.0,
+    /** Marked by the AI as central to the material; shown underlined. */
+    val important: Boolean = false,
 )
 
 @Serializable
@@ -41,10 +43,20 @@ data class Bullet(
     @SerialName("date_added") val dateAdded: String = "",
     @SerialName("origin_session_id") val originSessionId: String = "",
     @SerialName("origin_message_id") val originMessageId: String? = null,
-    /** "text", or "mermaid" for a diagram whose content is the Mermaid code. */
+    /** "text", "mermaid" (diagram), "code" (code block) or "table" (Markdown table). */
     val kind: String = "text",
+    /** Language of a code block, e.g. "python". */
+    val lang: String? = null,
+    /** Marked by the AI as a key point; shown underlined. */
+    val important: Boolean = false,
+    /** Set by you: "yellow" or "red". */
+    val highlight: String? = null,
 ) {
     val isDiagram: Boolean get() = kind == "mermaid"
+    val isCode: Boolean get() = kind == "code"
+    val isTable: Boolean get() = kind == "table"
+    /** Text and tables carry the points; diagrams and code are extras that are not read aloud. */
+    val isSpoken: Boolean get() = kind == "text" || kind == "table"
 }
 
 /** The same bullet row, also shown inside a Topic section. */

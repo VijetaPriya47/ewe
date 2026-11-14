@@ -33,7 +33,8 @@ Deno.test("schema only allows real refs", () => {
   const { refs } = renderPreviousNotes(sections, true);
   const s = JSON.stringify(buildSchema("topic", refs));
   assert(s.includes('"enum":["NEW","S1","S2"]') && s.includes('"enum":["END","S1.1","S1.2","S2.1"]'));
-  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid"]}') && s.includes('"required":["kind","text","insert_after"]'));
+  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid","code","table"]}') && s.includes('"required":["kind","text","lang","important","insert_after"]'));
+  assert(s.includes('"required":["target","title","important","bullets"]'));
 });
 
 Deno.test("model answer → apply payload, bad refs ignored", () => {
@@ -44,10 +45,11 @@ Deno.test("model answer → apply payload, bad refs ignored", () => {
     { target: "NEW", title: "Empty", bullets: [] },
   ] }, refs);
   assertEquals(p.sections.length, 2);
-  assertEquals(p.sections[0], { section_id: "sec-1", title: "Basics", bullets: [{ kind: "text", text: "a", after_bullet_id: "b-1" }, { kind: "text", text: "b", after_bullet_id: null }] });
+  assertEquals(p.sections[0], { section_id: "sec-1", title: "Basics", important: false, bullets: [
+    { kind: "text", text: "a", after_bullet_id: "b-1", important: false }, { kind: "text", text: "b", after_bullet_id: null, important: false }] });
   assertEquals(p.sections[1].section_id, null);
   const proj = toApplyPayload("project", { sections: [{ target: "S1", title: "T", bullets: [{ text: "x", insert_after: "S1.1" }] }] }, refs);
-  assertEquals(proj.sections[0], { section_id: null, title: "T", bullets: [{ kind: "text", text: "x", after_bullet_id: null }] });
+  assertEquals(proj.sections[0], { section_id: null, title: "T", important: false, bullets: [{ kind: "text", text: "x", after_bullet_id: null, important: false }] });
 });
 
 Deno.test("diagrams: fences stripped, empty ones dropped, existing ones summarised", () => {
@@ -64,6 +66,29 @@ Deno.test("diagrams: fences stripped, empty ones dropped, existing ones summaris
   assert(prev.text.includes("- [S1.1] (diagram already drawn: flowchart TD A --> B)"));
   const r = buildNotesRequest({ sessionType: "topic", sessionTitle: "x", previousNotes: "", refs, newText: "y", images: [] });
   assert(r.system.includes("# DIAGRAMS (optional") && r.system.includes("never replaces text"));
+});
+
+Deno.test("code, tables and important marks", () => {
+  const { refs } = renderPreviousNotes(sections, true);
+  const p = toApplyPayload("project", { sections: [{ title: "Code", important: true, bullets: [
+    { kind: "text", text: "Key rule", important: true },
+    { kind: "code", text: "```Python\n\ndef f(x):\n    return x\n```", lang: " Python " },
+    { kind: "table", text: "| a | b |\n| --- | --- |\n| 1 | 2 |" },
+    { kind: "table", text: "not really a table" },
+    { kind: "code", text: "```\n```" },
+  ] }] }, refs);
+  const g = p.sections[0];
+  assertEquals(g.important, true);
+  assertEquals(g.bullets.map((b) => [b.kind, b.important]), [["text", true], ["code", false], ["table", false], ["text", false]]);
+  assertEquals(g.bullets[1].text, "def f(x):\n    return x");
+  assertEquals((g.bullets[1] as { lang?: string }).lang, "python");
+  assert(!("lang" in g.bullets[0]));
+  const prev = renderPreviousNotes([{ id: "s", title: "T", bullets: [
+    { id: "c", content: "def f():\n  pass", kind: "code" }, { id: "t", content: "| a |\n| --- |\n| 1 |", kind: "table" }] }], false);
+  assert(prev.text.includes("(code block: def f(): pass)") && prev.text.includes("(table: | a | ; | --- | ; | 1 |)"));
+  assertEquals(summarize({ new_bullets: 4, new_diagrams: 0, new_tables: 1, new_code: 1,
+    sections: [{ title: "Code", is_new: true, added: 4, inline: 0, tables: 1, code: 1 }] }, 0),
+    "Added **2 points**, **1 table** and **1 code block** in a new section: **Code**.");
 });
 
 Deno.test("chat summary wording", () => {

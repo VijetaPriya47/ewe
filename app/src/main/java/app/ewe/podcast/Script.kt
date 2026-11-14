@@ -101,6 +101,35 @@ object Script {
         )
     }
 
+    /**
+     * The episode without AI: each due section's notes read as they are, trimmed to its word budget
+     * (so detail still fades), with a short line when the topic changes.
+     */
+    fun plain(plan: Plan): EpisodeScript {
+        var lastTopic: String? = null
+        val segments = plan.segments.map { seg ->
+            val it = seg.item
+            val intro = if (it.topic != lastTopic) "Now, ${speakable(it.topic)}. " else ""
+            lastTopic = it.topic
+            val budget = seg.wordBudget.coerceAtLeast(1)
+            val kept = ArrayList<String>()
+            var words = 0
+            for (note in it.notes) {
+                val line = speakable(note).trimEnd('.') + "."
+                val n = Planner.words(line)
+                if (kept.isNotEmpty() && words + n > budget) break
+                kept += line; words += n
+            }
+            "$intro${speakable(it.section)}. ${kept.joinToString(" ")}"
+        }
+        val sections = plan.segments.size
+        return EpisodeScript(
+            "Here is your revision for today. ${if (sections == 1) "One section" else "$sections sections"}, read from your notes.",
+            segments,
+            "That is everything for today. Well done.",
+        )
+    }
+
     fun fallback(item: DueItem): String =
         "${item.topic}. ${item.section}. " + item.notes.joinToString(" ") { speakable(it).trimEnd('.') + "." }
 
