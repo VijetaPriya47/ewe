@@ -2,6 +2,7 @@
 // Pure TypeScript (no Deno APIs) so it can be unit-tested anywhere.
 
 import type { ImageInput, JsonRequest, Part } from "./providers.ts";
+import { repairMermaid } from "./mermaid_repair.ts";
 
 export type SessionType = "topic" | "project";
 
@@ -102,7 +103,11 @@ const COMMON_RULES = `
 - A diagram is one extra bullet with "kind": "mermaid" and "text" = Mermaid code only (no \`\`\` fences).
 - Put it in the group it illustrates, right after the text bullets it summarises.
 - Use one of: flowchart TD, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, mindmap.
-- Keep it small: at most 12 nodes, short labels. Wrap labels with symbols in quotes: A["Cache (edge)"].
+- ONE STATEMENT PER LINE: put a real line break (\\n in the JSON string) after the first line and after
+  every arrow statement. Never write the whole diagram on one line. Example "text":
+  "flowchart TD\\n  A[\\"Client\\"] --> B[\\"Edge\\"]\\n  B -->|\\"miss\\"| C[\\"Origin\\"]"
+- Put every node label and edge label in double quotes: A["Fetch IDs (parallel)"], A -->|"miss"| B.
+- Keep it small: at most 12 nodes, short labels.
 - At most 2 diagrams per upload. Never repeat a diagram that already exists in PREVIOUS NOTES.
 - A diagram never replaces text: every point must still be in a text bullet.
 `.trim();
@@ -199,7 +204,7 @@ type Kind = "text" | "mermaid" | "code" | "table";
 function normalise(b: ModelBullet): { kind: Kind; text: string } {
   const raw = String(b.text ?? "");
   switch (b.kind) {
-    case "mermaid": return { kind: "mermaid", text: cleanMermaid(raw) };
+    case "mermaid": return { kind: "mermaid", text: repairMermaid(cleanMermaid(raw)) };
     case "code": return { kind: "code", text: cleanCode(raw) };
     case "table": return isTable(raw) ? { kind: "table", text: raw.trim() } : { kind: "text", text: raw.trim() };
     default: return { kind: "text", text: raw.trim() };

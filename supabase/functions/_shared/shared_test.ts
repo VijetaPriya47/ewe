@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { buildNotesRequest, buildSchema, renderPreviousNotes, summarize, toApplyPayload } from "./notes.ts";
 import { buildPlacementRequest, resolvePlacement } from "./placement.ts";
 import { embed, generateJson, type ProviderCfg, ProviderError, toGeminiSchema } from "./providers.ts";
+import { candidates, repairMermaid } from "./mermaid_repair.ts";
 
 const sections = [
   { id: "sec-1", title: "Basics", bullets: [{ id: "b-1", content: "CDN = servers near users" }, { id: "b-2", content: "Lower latency" }] },
@@ -89,6 +90,37 @@ Deno.test("code, tables and important marks", () => {
   assertEquals(summarize({ new_bullets: 4, new_diagrams: 0, new_tables: 1, new_code: 1,
     sections: [{ title: "Code", is_new: true, added: 4, inline: 0, tables: 1, code: 1 }] }, 0),
     "Added **2 points**, **1 table** and **1 code block** in a new section: **Code**.");
+});
+
+Deno.test("mermaid repair: one-line flowcharts split, labels quoted, good code untouched", () => {
+  const oneLine = 'flowchart TD I["Index"] --> H["Hash"] I --> T["Tree"] H --> EG["Even grid"] T --> QT["Quadtree"]';
+  assertEquals(repairMermaid(oneLine),
+    'flowchart TD\n  I["Index"] --> H["Hash"]\n  I --> T["Tree"]\n  H --> EG["Even grid"]\n  T --> QT["Quadtree"]');
+  assertEquals(repairMermaid("flowchart TD\n  A[Fetch IDs (parallel)] --> B"), 'flowchart TD\n  A["Fetch IDs (parallel)"] --> B');
+  const good = 'flowchart TD\nA["x"] -->|"y"| B["z"]';
+  assertEquals(repairMermaid(good), good);
+  assertEquals(repairMermaid("sequenceDiagram\n  A->>B: hi"), "sequenceDiagram\n  A->>B: hi");
+  assertEquals(repairMermaid("flowchart TD subgraph S A --> B end"), "flowchart TD subgraph S A --> B end"); // too risky: left alone
+  // a model answer gets repaired before it is saved
+  const { refs } = renderPreviousNotes([], true);
+  const p = toApplyPayload("project", { sections: [{ title: "Index", bullets: [{ kind: "mermaid", text: oneLine }] }] }, refs);
+  assert(p.sections[0].bullets[0].text.startsWith('flowchart TD\n  I["Index"]'));
+});
+
+Deno.test("the app's repair.js and this TypeScript copy agree", async () => {
+  const js = await Deno.readTextFile(new URL("../../../app/src/main/assets/mermaid/repair.js", import.meta.url));
+  const App = new Function(js + "\nreturn MermaidRepair;")() as { candidates: (c: string) => string[] };
+  const samples = [
+    'flowchart TD I["Index"] --> H["Hash"] I --> T["Tree"]',
+    "graph LR A[Client] -->|GET /a.js| B{Cached?} B -->|yes| C[Edge] B -->|no| D[Origin] D --> C",
+    "flowchart TD A & B --> C C -- retries --> D D -.-> E((Done))",
+    "flowchart TD\n  A[Fetch IDs (parallel)] --> B[Rank: by distance]",
+    "```mermaid\nflowchart LR\n  A --> B\n```",
+    "flowchart TD; A-->B; B-->C",
+    "mindmap\n  root((CDN))\n    Basics",
+    "flowchart TD subgraph S A --> B end",
+  ];
+  for (const c of samples) assertEquals(candidates(c), App.candidates(c), c);
 });
 
 Deno.test("chat summary wording", () => {

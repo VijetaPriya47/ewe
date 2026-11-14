@@ -9,6 +9,7 @@
   #out svg { max-width: 100%; height: auto; }
 </style>
 <script src="mermaid.min.js"></script>
+<script src="repair.js"></script>
 </head>
 <body>
 <div id="out"></div>
@@ -18,19 +19,36 @@
     if (window.EweBridge) window.EweBridge[kind](String(value));
     else document.title = kind + ':' + value;
   }
-  function draw(code) {
+  var ready = false;
+  function setup() {
+    if (ready) return;
     mermaid.initialize({
       startOnLoad: false, theme: 'neutral', securityLevel: 'strict',
       fontFamily: 'sans-serif', flowchart: { useMaxWidth: true, htmlLabels: false },
     });
-    mermaid.render('d' + Date.now(), code).then(function (r) {
-      document.getElementById('out').innerHTML = r.svg;
-      requestAnimationFrame(function () {
-        report('height', Math.ceil(document.getElementById('out').getBoundingClientRect().height));
-      });
-    }).catch(function (e) {
-      report('error', (e && e.message) ? e.message.split('\n')[0] : e);
-    });
+    ready = true;
+  }
+  // Tries the code as written, then known repairs. A repaired version that draws is reported back
+  // ("fixed") so the app can save it; if nothing draws, the first error is reported.
+  async function draw(code) {
+    setup();
+    var tries = MermaidRepair.candidates(code), firstError = null;
+    for (var k = 0; k < tries.length; k++) {
+      try {
+        await mermaid.parse(tries[k]);
+        var r = await mermaid.render('d' + Date.now() + k, tries[k]);
+        document.getElementById('out').innerHTML = r.svg;
+        if (tries[k] !== code) report('fixed', tries[k]);
+        requestAnimationFrame(function () {
+          report('height', Math.ceil(document.getElementById('out').getBoundingClientRect().height));
+        });
+        return;
+      } catch (e) {
+        if (!firstError) firstError = e;
+      }
+    }
+    document.getElementById('out').innerHTML = '';
+    report('error', (firstError && firstError.message) ? firstError.message.split('\n')[0] : firstError);
   }
 </script>
 </body>

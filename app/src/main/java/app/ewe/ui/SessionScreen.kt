@@ -432,7 +432,9 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(mark ?: androidx.compose.ui.graphics.Color.Transparent)
                             .padding(horizontal = if (mark != null) 6.dp else 0.dp)) {
                         when {
-                            p.bullet.isDiagram -> MermaidDiagram(p.bullet.content, onLabel = toggle)
+                            p.bullet.isDiagram -> MermaidDiagram(p.bullet.content, onLabel = toggle, fixKey = p.bullet.id,
+                                onFixed = { repo.saveRepairedDiagram(p.bullet.id, it) },
+                                aiFix = { code, error -> repo.fixDiagram(code, error) })
                             p.bullet.isCode -> CodeBlock(p.bullet.content, p.bullet.lang, onLabel = toggle)
                             else -> NoteTable(p.bullet.content, onLabel = toggle)
                         }

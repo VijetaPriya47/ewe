@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.linking]
 verify_jwt = false
+
+[functions.fix-diagram]
+verify_jwt = false

@@ -3,6 +3,22 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.3.1 — 2026-11-14
+
+### Fixed
+- **Diagrams that couldn't be drawn.** The notes AI sometimes wrote a whole Mermaid diagram on one
+  line (Mermaid needs one statement per line), and it was saved unchecked. Now:
+  - the prompt asks for one statement per line and quoted labels, with an example;
+  - the server mends one-line flowcharts and unquoted labels before saving;
+  - before drawing, the app checks the code with Mermaid and tries the same repairs (plus stray
+    ``` fences); a repair that draws is shown at once and saved, so existing broken diagrams
+    mend themselves the next time you open them;
+  - if nothing works, your notes model is asked once to correct the code ("Fixing this diagram…");
+    only if that fails too is the code shown, now with a **Fix with AI** button.
+
+### Added
+- Edge function `fix-diagram` (used only for the last step above).
+
 ## 0.3.0 — 2026-11-14
 
 ### Added

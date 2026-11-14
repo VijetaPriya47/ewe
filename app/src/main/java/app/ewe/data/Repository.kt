@@ -253,6 +253,20 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         refresh(); refreshEmbeddingsQuietly()
     }
 
+    /** Last resort for a diagram that cannot be drawn: the notes model corrects the Mermaid code. */
+    suspend fun fixDiagram(code: String, error: String): String {
+        val cfg = prefs.cfg(settings.notesProvider, settings.notesModel) ?: throw ApiException("Pick a notes model in Settings first.")
+        val res = api.function("fix-diagram", buildJsonObject {
+            put("code", code); put("error", error); putProvider("provider", cfg)
+        })
+        return res["code"]?.jsonPrimitive?.contentOrNull ?: throw ApiException("The model returned no diagram.")
+    }
+
+    /** Saves a repaired diagram quietly; if it can't be saved now, it is simply repaired again next time. */
+    fun saveRepairedDiagram(id: String, code: String) {
+        scope.launch { runCatching { editBullet(id, code) } }
+    }
+
     /** Yellow or red highlight on a point, or null to clear it. */
     suspend fun setHighlight(id: String, color: String?) {
         api.update("bullets", "id=eq.$id", buildJsonObject { put("highlight", color) }); refresh()
