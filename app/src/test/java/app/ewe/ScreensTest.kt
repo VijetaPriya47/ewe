@@ -397,6 +397,19 @@ class ScreensTest {
         org.junit.Assert.assertNull("the photo itself is left as it was", cropped)
     }
 
+    @Test fun diagramFullScreen() {
+        val r = repo(snapshot(configured))
+        show("4_session_notes_diagram_full_button") { SessionScreen(r, "cdn", true, {}, {}, {}) }
+        compose.onNodeWithContentDescription("Full screen").performScrollTo().performClick()
+        compose.onNodeWithText("Drag to move around · pinch to zoom").assertExists()
+        compose.onNodeWithText("How a request reaches the nearest PoP").assertExists()   // the caption as the title
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.onNodeWithText("Drag to move around · pinch to zoom").assertDoesNotExist()
+        // tapping the diagram itself opens it too
+        compose.onNodeWithContentDescription("Diagram").performClick()
+        compose.onNodeWithText("Drag to move around · pinch to zoom").assertExists()
+    }
+
     @Test fun options() {
         val r = repo(snapshot(configured))
         show("6_session_options") { SessionScreen(r, "cdn", false, {}, {}, {}) }

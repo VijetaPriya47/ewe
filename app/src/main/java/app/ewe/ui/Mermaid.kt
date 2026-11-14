@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -70,6 +72,7 @@ fun MermaidDiagram(
     var error by remember(code) { mutableStateOf<String?>(null) }
     var showCode by remember(code) { mutableStateOf(false) }
     var fixing by remember(code) { mutableStateOf(false) }
+    var full by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun askAi(reason: String) {
@@ -83,8 +86,13 @@ fun MermaidDiagram(
         }
     }
 
+    if (full) MermaidFullScreen(code, label) { full = false }
     Box(modifier) {
         ExtraFrame(label, "Diagram code", code, onLabel, barExtras = {
+            if (error == null && !fixing && !showCode) Box(Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button) { full = true }
+                .semantics { contentDescription = "Full screen" }, contentAlignment = Alignment.Center) {
+                Icon(Ic.Expand, null, tint = C.G500, modifier = Modifier.size(14.dp))
+            }
             if (error == null && !fixing) Text(if (showCode) "Diagram" else "Code", style = ts(11, 500, C.G500),
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button) { showCode = !showCode }.padding(horizontal = 8.dp, vertical = 10.dp))
         }) {
@@ -94,7 +102,7 @@ fun MermaidDiagram(
                     Text("Fixing this diagram…", style = ts(13, 400, C.G600))
                 }
                 // A new page for each version of the code, so its callbacks always update the current state.
-                error == null && !showCode -> androidx.compose.runtime.key(code) { AndroidView(
+                error == null && !showCode -> androidx.compose.runtime.key(code) { Box { AndroidView(
                     factory = { ctx ->
                         diagramWebView(ctx, onHeight = { heightCss = it }, onFixed = { repaired -> onFixed?.invoke(repaired) }, onError = { e ->
                             val key = fixKey ?: code
@@ -105,7 +113,11 @@ fun MermaidDiagram(
                     modifier = Modifier.fillMaxWidth().padding(8.dp)
                         .height(if (heightCss > 0) heightCss.dp else 120.dp)
                         .semantics { contentDescription = "Diagram" },
-                ) }
+                )
+                    // The page itself takes no input here: a tap opens the diagram full screen,
+                    // and drags still scroll the notes.
+                    Box(Modifier.matchParentSize().clickable(onClickLabel = "Open full screen", role = Role.Button) { full = true })
+                } }
                 else -> Column {
                     if (error != null) Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Couldn't draw this diagram: $error", style = ts(12, 400, C.Amber, 1.4f), modifier = Modifier.weight(1f))
@@ -122,6 +134,42 @@ fun MermaidDiagram(
     }
 }
 
+/** The diagram at its real size: drag to scroll both ways, pinch to zoom. */
+@Composable
+fun MermaidFullScreen(code: String, title: String, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val toast = LocalToast.current
+    var error by remember(code) { mutableStateOf<String?>(null) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Column(Modifier.fillMaxSize().background(C.White).systemBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(RoundedCornerShape(22.dp)).clickable(role = Role.Button, onClick = onClose)
+                    .semantics { contentDescription = "Close" }, contentAlignment = Alignment.Center) {
+                    Icon(Ic.Close, null, tint = C.Ink, modifier = Modifier.size(18.dp))
+                }
+                Text(title.removeSuffix(" · Mermaid").removeSuffix("Diagram").ifBlank { "Diagram" }, style = ts(15, 600), maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
+                Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { copyText(context, title, code); toast("Diagram code copied") }
+                    .semantics { contentDescription = "Copy diagram code" }.padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Ic.Copy, null, tint = C.G600, modifier = Modifier.size(15.dp))
+                    Text("Copy", style = ts(13, 500, C.G600))
+                }
+            }
+            Box(Modifier.fillMaxWidth().weight(1f).background(C.G50)) {
+                if (error != null) Text("Couldn't draw this diagram: $error", style = ts(13, 400, C.Amber, 1.4f), modifier = Modifier.padding(16.dp))
+                else AndroidView(
+                    factory = { ctx -> diagramWebView(ctx, onHeight = {}, onFixed = {}, onError = { error = it }, full = true).also { it.tag = code } },
+                    modifier = Modifier.fillMaxSize().semantics { contentDescription = "Diagram, full screen" },
+                )
+            }
+            Text("Drag to move around · pinch to zoom", style = ts(12, 400, C.G500), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp))
+        }
+    }
+}
+
 fun copyText(context: Context, label: String, text: String) {
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(label, text))
 }
@@ -134,12 +182,20 @@ private class Bridge(val onHeight: (Int) -> Unit, val onFixed: (String) -> Unit,
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-private fun diagramWebView(context: Context, onHeight: (Int) -> Unit, onFixed: (String) -> Unit, onError: (String) -> Unit): WebView =
+private fun diagramWebView(context: Context, onHeight: (Int) -> Unit, onFixed: (String) -> Unit, onError: (String) -> Unit,
+                           full: Boolean = false): WebView =
     WebView(context).apply {
         setBackgroundColor(AColor.TRANSPARENT)
-        isVerticalScrollBarEnabled = false
-        isHorizontalScrollBarEnabled = false
+        isVerticalScrollBarEnabled = full
+        isHorizontalScrollBarEnabled = full
         settings.javaScriptEnabled = true
+        if (full) {
+            // pinch to zoom, without the old +/- buttons
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.useWideViewPort = true
+        }
         // Only the bundled page and script are loaded; nothing from the network.
         settings.blockNetworkLoads = true
         settings.allowContentAccess = false
@@ -149,7 +205,7 @@ private fun diagramWebView(context: Context, onHeight: (Int) -> Unit, onFixed: (
                 (view.tag as? String)?.let { view.evaluateJavascript("draw(${quote(it)})", null) }
             }
         }
-        loadUrl("file:///android_asset/mermaid/render.html")
+        loadUrl("file:///android_asset/mermaid/render.html" + if (full) "?full=1" else "")
     }
 
 private fun WebView.draw(code: String) {

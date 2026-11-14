@@ -3,6 +3,15 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.8.0 — 2026-11-14
+
+### Added
+- **Diagrams open full screen.** Tap a diagram (or the new full-screen button under it) to see it
+  at its real size instead of shrunk to fit the note. Drag to scroll in any direction and pinch to
+  zoom (up to 6×); small diagrams are shown larger. The caption is the title, and **Copy** copies
+  the code. Works in Notes and Overview. Scrolling past a diagram in your notes still scrolls the
+  notes.
+
 ## 0.7.0 — 2026-11-14
 
 ### Added

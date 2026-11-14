@@ -2,11 +2,20 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<script>
+  // render.html?full=1 is the full-screen viewer: the diagram keeps its real size (scroll to see it all)
+  // and can be pinched to zoom. Without it, the diagram is shrunk to fit the note's width.
+  var FULL = location.search.indexOf('full=1') >= 0;
+  document.write('<meta name="viewport" content="width=device-width, initial-scale=1, ' +
+    (FULL ? 'minimum-scale=0.2, maximum-scale=6, user-scalable=yes' : 'maximum-scale=1') + '">');
+</script>
 <style>
   html, body { margin: 0; padding: 0; background: transparent; }
   #out { display: flex; justify-content: center; }
   #out svg { max-width: 100%; height: auto; }
+  body.full #out { box-sizing: border-box; width: max-content; min-width: 100vw; min-height: 100vh;
+                   align-items: center; padding: 16px; }
+  body.full #out svg { max-width: none !important; }
 </style>
 <script src="mermaid.min.js"></script>
 <script src="repair.js"></script>
@@ -18,6 +27,17 @@
   function report(kind, value) {
     if (window.EweBridge) window.EweBridge[kind](String(value));
     else document.title = kind + ':' + value;
+  }
+  // Full screen: draw at natural size, enlarged (up to 2.5×) when narrower than the screen.
+  function fullSize() {
+    document.body.classList.add('full');
+    var svg = document.querySelector('#out svg');
+    if (!svg || !svg.viewBox || !svg.viewBox.baseVal || !svg.viewBox.baseVal.width) return;
+    var vb = svg.viewBox.baseVal;
+    var scale = Math.min(Math.max((window.innerWidth - 32) / vb.width, 1), 2.5);
+    svg.removeAttribute('style');
+    svg.setAttribute('width', Math.round(vb.width * scale));
+    svg.setAttribute('height', Math.round(vb.height * scale));
   }
   var ready = false;
   function setup() {
@@ -38,6 +58,7 @@
         await mermaid.parse(tries[k]);
         var r = await mermaid.render('d' + Date.now() + k, tries[k]);
         document.getElementById('out').innerHTML = r.svg;
+        if (FULL) fullSize();
         if (tries[k] !== code) report('fixed', tries[k]);
         requestAnimationFrame(function () {
           report('height', Math.ceil(document.getElementById('out').getBoundingClientRect().height));

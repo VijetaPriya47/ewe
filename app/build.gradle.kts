@@ -18,7 +18,7 @@ android {
         applicationId = "app.ewe"
         minSdk = 26
         targetSdk = 35
-        versionName = "0.7.0"
+        versionName = "0.8.0"
         // Taken from versionName (0.3.1 → 301), so every build of a release, local or GitHub,
         // has the same number and each new release is higher. Android refuses lower numbers.
         versionCode = versionName!!.split('.').map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
