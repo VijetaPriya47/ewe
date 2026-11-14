@@ -6,6 +6,8 @@
 //     "mode"?: "notes" | "reference" | "summary",                  // default "notes"
 //     "text"?: string,
 //     "images"?: [{ "mime": "image/jpeg", "data": "<base64>" }],   // max 10
+//     "figures"?: [{ "key": "F1", "path": "<user>/<session>/<file>.jpg", "mime": "image/jpeg", "data": "<base64>" }],
+//                  // pictures cut out of the pages, already in the "figures" bucket; notes mode only, max 6
 //     "local_date": "YYYY-MM-DD",                                   // the phone's date
 //     "provider": { "kind": "openai"|"anthropic"|"gemini"|"compatible", "api_key": "...",
 //                   "model": "...", "base_url"?: "..." } }
@@ -21,7 +23,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2.119.0";
 import { HttpError, must, requireUser, serve, userClient } from "../_shared/http.ts";
 import { checkCfg, generateJson, type ImageInput } from "../_shared/providers.ts";
 import {
-  buildNotesRequest, buildReferenceRequest, buildSummaryRequest, cleanMermaid, cleanMindmap, type ExistingSection,
+  buildNotesRequest, buildReferenceRequest, buildSummaryRequest, cleanMermaid, cleanMindmap, type ExistingSection, placeFigures,
   renderPreviousNotes, type SessionType, summarize, toApplyPayload,
 } from "../_shared/notes.ts";
 import { repairMermaid } from "../_shared/mermaid_repair.ts";
@@ -38,12 +40,16 @@ serve(async (req, body) => {
   const images = (body.images ?? []) as ImageInput[];
   const localDate = String(body.local_date ?? "");
   if (!sessionId) throw new HttpError("session_id is required");
-  if (!text.trim() && images.length === 0) throw new HttpError("Send text or at least one photo");
+  if (!text.trim() && images.length === 0 && !((body.figures as unknown[] | undefined)?.length)) throw new HttpError("Send text or at least one photo");
   if (images.length > 10) throw new HttpError("Up to 10 photos per message");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) throw new HttpError("local_date is required (YYYY-MM-DD)");
   const provider = checkCfg(body.provider, "notes");
   const db = userClient(req);
-  await requireUser(req, db);
+  const userId = await requireUser(req, db);
+  type Figure = { key: string; path: string; mime: string; data: string };
+  const figures = ((body.figures ?? []) as Figure[]).filter((f) =>
+    /^F\d+$/i.test(String(f?.key)) && String(f?.path).startsWith(`${userId}/${sessionId}/`) && f?.data);
+  if (figures.length > 6) throw new HttpError("Up to 6 figures per message");
 
   // 1. The session and its saved references
   const { data: session } = await db.from("sessions").select("id, title, type, is_active").eq("id", sessionId).maybeSingle();
@@ -110,6 +116,7 @@ serve(async (req, body) => {
   const output = await generateJson(provider, buildNotesRequest({
     sessionType: type, sessionTitle: session.title, previousNotes, refs, newText: text, images,
     links: linksBlock(known, textUrls),
+    figures: figures.map((f) => ({ key: f.key.toUpperCase(), image: { mime: f.mime || "image/jpeg", data: f.data } })),
   })) as { sections?: unknown[]; skipped_duplicates?: number; links?: ModelLink[] };
 
   // 4. Log the chat message, save its links, then save the notes (citing them) atomically
@@ -123,10 +130,11 @@ serve(async (req, body) => {
     for (const b of g.bullets) if (b.kind === "text" || b.kind === "table") b.text = citeRefs(b.text, ids, textUrls);
     g.bullets = g.bullets.filter((b) => b.text.replace(/\[\[ref:[0-9a-fA-F-]+\]\]/g, "").trim().length > 0);
   }
-  payload.sections = payload.sections.filter((g) => g.bullets.length > 0);
+  payload.sections = placeFigures(payload.sections.filter((g) => g.bullets.length > 0) as never,
+    figures.map((f) => ({ key: f.key, path: f.path }))) as never;
   const result = must(await db.rpc("apply_notes", {
     p_session_id: sessionId, p_message_id: msg.id, p_payload: payload, p_today: localDate,
-  })) as { new_bullets: number; new_diagrams: number; new_tables: number; new_code: number; new_sections: number; sections: never[] };
+  })) as { new_bullets: number; new_diagrams: number; new_tables: number; new_code: number; new_figures: number; new_sections: number; sections: never[] };
 
   const fresh = saved.filter((r) => r.is_new);
   const summary = summarize(result, Math.max(0, Number(output?.skipped_duplicates) || 0)) +

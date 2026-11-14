@@ -20,10 +20,15 @@ object Search {
             for (section in s.sectionsOf(session.id)) {
                 for (p in s.points(section.id)) {
                     val from = p.link?.let { s.session(s.section(p.bullet.sectionId)?.sessionId) }
+                    val text = when (p.bullet.kind) {
+                        "figure" -> p.bullet.caption.orEmpty()
+                        "mermaid" -> p.bullet.content + " " + p.bullet.caption.orEmpty()
+                        else -> p.bullet.content
+                    }
                     val rank = when {
-                        p.bullet.content.hit() -> 0
+                        text.hit() -> 0
                         section.title.hit() -> 1
-                        "${session.title} ${section.title} ${p.bullet.content} ${from?.title.orEmpty()}".hit() -> 2
+                        "${session.title} ${section.title} $text ${from?.title.orEmpty()}".hit() -> 2
                         else -> continue
                     }
                     ranked += rank to NoteHit(session, section, p, from)

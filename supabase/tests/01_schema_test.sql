@@ -93,6 +93,23 @@ begin
   update bullets set highlight = 'yellow' where content = 'Solver uses backtracking';
   perform pg_temp.ok(pg_temp.fails('update bullets set highlight = ''blue'' where kind = ''table'''), 'only yellow or red');
   delete from bullets where section_id in (select id from sections where title = 'Code');
+
+  -- figures: only from your own storage folder; captions kept; counted apart
+  v_res := apply_notes(v_sud, null, jsonb_build_object('sections', jsonb_build_array(jsonb_build_object('section_id', null, 'title', 'Figures', 'bullets', jsonb_build_array(
+     jsonb_build_object('text', '11111111-1111-1111-1111-111111111111/s/f1.jpg', 'kind', 'figure', 'caption', 'Quadtree split'),
+     jsonb_build_object('text', '22222222-2222-2222-2222-222222222222/s/x.jpg', 'kind', 'figure', 'caption', 'not mine'),
+     jsonb_build_object('text', 'flowchart TD
+  A --> B', 'kind', 'mermaid', 'caption', 'Two steps'))))), date '2026-11-09');
+  perform pg_temp.ok((v_res->>'new_figures')::int = 1 and (v_res->>'new_bullets')::int = 2, 'someone else''s figure refused: ' || v_res::text);
+  perform pg_temp.ok((select caption from bullets where kind = 'figure') = 'Quadtree split'
+                     and (select caption from bullets where kind = 'mermaid' and content like 'flowchart TD%A --> B') = 'Two steps', 'captions stored');
+  perform pg_temp.ok(section_embed_text((select id from sections where title = 'Figures')) like '%Quadtree split%'
+                     and section_embed_text((select id from sections where title = 'Figures')) not like '%f1.jpg%', 'figures embedded by caption');
+  delete from bullets where section_id in (select id from sections where title = 'Figures');
+
+  -- storage: your own folder only
+  insert into storage.objects (bucket_id, name) values ('figures', '11111111-1111-1111-1111-111111111111/s/f1.jpg');
+  perform pg_temp.ok(pg_temp.fails('insert into storage.objects (bucket_id, name) values (''figures'', ''22222222-2222-2222-2222-222222222222/s/x.jpg'')'), 'no writing in another folder');
   select b.id into v_sb from bullets b join sections s on s.id = b.section_id where s.session_id = v_sud;
 
   -- linking rules
@@ -196,5 +213,6 @@ end $$;
 select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222"}', false);
 do $$ begin
   perform pg_temp.ok((select count(*) from sessions) = 0 and (select count(*) from bullets) = 0, 'row level security');
+  perform pg_temp.ok((select count(*) from storage.objects) = 0, 'figures of others are invisible');
 end $$;
 reset role;

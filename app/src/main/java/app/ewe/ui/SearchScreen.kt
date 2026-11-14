@@ -114,7 +114,11 @@ fun SearchScreen(repo: Repository, onBack: () -> Unit, onOpen: (sessionId: Strin
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.G50).clickable { onOpen(n.session.id, true) }.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(highlight("${n.session.title} › ${n.section.title}", query), style = ts(12, 400, C.G600))
-                        if (n.point.bullet.kind != "text") {
+                        if (n.point.bullet.isFigure) {
+                            Text("Figure", style = ts(11, 600, C.G500))
+                            Text(highlight(n.point.bullet.caption.orEmpty().ifBlank { "Figure from your photo" }, query), style = ts(15, 400, C.Ink, 1.45f))
+                        } else if (n.point.bullet.kind != "text") {
+                            n.point.bullet.caption?.takeIf { n.point.bullet.isDiagram && it.isNotBlank() }?.let { Text(highlight(it, query), style = ts(14, 500, C.Ink, 1.4f)) }
                             Text(when { n.point.bullet.isDiagram -> "Diagram"; n.point.bullet.isCode -> "Code"; else -> "Table" }, style = ts(11, 600, C.G500))
                             Text(highlight(app.ewe.data.Rich.refsToShown(n.point.bullet.content, snap), query), style = ts(13, 400, C.G700, 1.4f).copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
                                 maxLines = 4, overflow = TextOverflow.Ellipsis)

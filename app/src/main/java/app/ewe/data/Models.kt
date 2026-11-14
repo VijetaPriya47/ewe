@@ -43,7 +43,7 @@ data class Bullet(
     @SerialName("date_added") val dateAdded: String = "",
     @SerialName("origin_session_id") val originSessionId: String = "",
     @SerialName("origin_message_id") val originMessageId: String? = null,
-    /** "text", "mermaid" (diagram), "code" (code block) or "table" (Markdown table). */
+    /** "text", "mermaid" (diagram), "code" (code block), "table" (Markdown table) or "figure". */
     val kind: String = "text",
     /** Language of a code block, e.g. "python". */
     val lang: String? = null,
@@ -51,7 +51,11 @@ data class Bullet(
     val important: Boolean = false,
     /** Set by you: "yellow" or "red". */
     val highlight: String? = null,
+    /** One line saying what a figure or diagram shows. */
+    val caption: String? = null,
 ) {
+    /** A picture cut out of your photo; content is its path in the "figures" storage bucket. */
+    val isFigure: Boolean get() = kind == "figure"
     val isDiagram: Boolean get() = kind == "mermaid"
     val isCode: Boolean get() = kind == "code"
     val isTable: Boolean get() = kind == "table"

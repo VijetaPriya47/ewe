@@ -142,6 +142,36 @@ class Supabase(private val prefs: LocalPrefs, private val http: OkHttpClient = d
     suspend fun rpc(fn: String, args: JsonObject = JsonObject(emptyMap())): JsonElement =
         raw("POST", "/rest/v1/rpc/$fn", args)
 
+    // ───────────── storage (the private "figures" bucket) ─────────────
+    suspend fun uploadObject(bucket: String, path: String, bytes: ByteArray, contentType: String = "image/jpeg") =
+        objectCall("POST", "/storage/v1/object/$bucket/$path", bytes.toRequestBody(contentType.toMediaType()))
+
+    suspend fun downloadObject(bucket: String, path: String): ByteArray =
+        objectCall("GET", "/storage/v1/object/authenticated/$bucket/$path", null)
+
+    suspend fun deleteObject(bucket: String, path: String) {
+        objectCall("DELETE", "/storage/v1/object/$bucket/$path", null)
+    }
+
+    private suspend fun objectCall(method: String, path: String, body: okhttp3.RequestBody?, retried: Boolean = false): ByteArray =
+        withContext(Dispatchers.IO) {
+            val token = freshToken()
+            val req = Request.Builder().url(prefs.supabaseUrl + path)
+                .header("apikey", prefs.anonKey).header("Authorization", "Bearer $token")
+                .method(method, body).build()
+            val (code, bytes) = try {
+                slowHttp.newCall(req).execute().use { it.code to (it.body?.bytes() ?: ByteArray(0)) }
+            } catch (e: IOException) {
+                throw ApiException("No internet connection.")
+            }
+            if ((code == 401 || code == 403) && !retried) {
+                freshToken(force = true)
+                return@withContext objectCall(method, path, body, retried = true)
+            }
+            if (code !in 200..299) throw ApiException(errorMessage(String(bytes), code), code)
+            bytes
+        }
+
     /** Edge function call. These wait for an AI provider, so the timeout is long. */
     suspend fun function(name: String, body: JsonObject): JsonObject =
         raw("POST", "/functions/v1/$name", body, client = slowHttp).jsonObject

@@ -39,7 +39,7 @@ sealed interface SyncState {
 }
 
 /** One chat message to send: text and up to 10 images. */
-data class Batch(val text: String, val images: List<Uri>, val mode: String = "notes")
+data class Batch(val text: String, val images: List<Uri>, val mode: String = "notes", val figures: List<Uri> = emptyList())
 
 /**
  * An upload that is being turned into notes, or one that failed and can be retried.
@@ -55,7 +55,7 @@ data class Upload(
     val text: String get() = batches.firstOrNull()?.text.orEmpty()
     val images: List<Uri> get() = batches.flatMap { it.images }
     /** Only a single plain message can go back into the composer to be edited. */
-    val editable: Boolean get() = pdfDir == null && batches.size == 1
+    val editable: Boolean get() = pdfDir == null && batches.size == 1 && batches[0].figures.isEmpty()
     val done: Int get() = total - batches.size
 }
 
@@ -169,7 +169,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             val s = coroutineScope {
                 val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at") }
                 val sections = async { api.selectAll("sections", "id,session_id,title,position,important") }
-                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,position,date_added,origin_session_id,origin_message_id") }
+                val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,caption,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
                 val messages = async { api.selectAll("messages", "id,session_id,role,content,image_count,created_at,mode") }
                 val references = async { api.selectAll("session_references", "id,session_id,number,url,title,description,date_added,origin_message_id") }
@@ -312,7 +312,37 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     }
 
     suspend fun deleteBullet(id: String) {
-        api.delete("bullets", "id=eq.$id"); refresh(); refreshEmbeddingsQuietly()
+        val b = _snapshot.value.bullet(id)
+        api.delete("bullets", "id=eq.$id")
+        // A figure's picture goes too, unless another note (e.g. a recreated session) still shows it.
+        if (b != null && b.isFigure && _snapshot.value.bullets.none { it.id != id && it.isFigure && it.content == b.content }) {
+            runCatching { api.deleteObject(FIGURES, b.content) }
+            figureFile(b.content).delete()
+        }
+        refresh(); refreshEmbeddingsQuietly()
+    }
+
+    suspend fun editCaption(id: String, caption: String) {
+        api.update("bullets", "id=eq.$id", buildJsonObject { put("caption", caption.trim().take(200)) }); refresh()
+    }
+
+    suspend fun editDiagram(id: String, code: String, caption: String) {
+        api.update("bullets", "id=eq.$id", buildJsonObject {
+            put("content", code.trimEnd().trimStart('\n', '\r')); put("caption", caption.trim().take(200))
+        })
+        refresh(); refreshEmbeddingsQuietly()
+    }
+
+    // ───────────── figures: kept on the phone after the first download, so they show offline ─────────────
+    fun figureFile(path: String): File = File(context.filesDir, "figures/" +
+        java.security.MessageDigest.getInstance("SHA-1").digest(path.toByteArray()).joinToString("") { "%02x".format(it) } + ".jpg")
+
+    suspend fun loadFigure(path: String): File {
+        val f = figureFile(path)
+        if (f.exists() && f.length() > 0) return f
+        val bytes = api.downloadObject(FIGURES, path)
+        withContext(Dispatchers.IO) { f.parentFile?.mkdirs(); f.writeBytes(bytes) }
+        return f
     }
 
     /** Removes a linked point from a Topic; the point itself stays in its own session. */
@@ -329,9 +359,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     private fun busy(sessionId: String) = _uploads.value[sessionId]?.let { it.error == null } == true
 
     /** Runs outside the screen's lifetime, so leaving the chat does not cancel it. */
-    fun send(sessionId: String, text: String, images: List<Uri>, mode: String = "notes") {
+    fun send(sessionId: String, text: String, images: List<Uri>, mode: String = "notes", figures: List<Uri> = emptyList()) {
         if (busy(sessionId)) return
-        run(sessionId, Upload(listOf(Batch(text, images, mode)), "Reading…"))
+        run(sessionId, Upload(listOf(Batch(text, images, mode, if (mode == "notes") figures else emptyList())), "Reading…"))
     }
 
     /** Sends whatever is left of a failed upload (for a PDF: the remaining pages). */
@@ -402,15 +432,36 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         val encoded = withContext(Dispatchers.Default) {
             bitmaps.map { Base64.encodeToString(Images.jpeg(it, 88), Base64.NO_WRAP) }
         }
+        // Figures go to your private storage folder first; the AI then places and captions them.
+        val uploaded = ArrayList<String>()
+        val figureParts = if (batch.figures.isEmpty()) emptyList() else {
+            stage("Saving figures…")
+            batch.figures.mapIndexed { i, uri ->
+                val (stored, small) = withContext(Dispatchers.Default) {
+                    val bmp = Images.load(context, uri, FIGURE_MAX_SIDE)
+                    Images.jpeg(bmp, 85) to Base64.encodeToString(Images.jpeg(Images.fit(bmp, 1024), 80), Base64.NO_WRAP)
+                }
+                val path = "${prefs.userId}/$sessionId/${java.util.UUID.randomUUID()}.jpg"
+                api.uploadObject(FIGURES, path, stored)
+                uploaded += path
+                withContext(Dispatchers.IO) { figureFile(path).apply { parentFile?.mkdirs() }.writeBytes(stored) }
+                buildJsonObject { put("key", "F${i + 1}"); put("path", path); put("mime", "image/jpeg"); put("data", small) }
+            }
+        }
         stage("Making notes…")
-        val res = api.function("generate-notes", buildJsonObject {
+        val res = try { api.function("generate-notes", buildJsonObject {
             put("session_id", sessionId)
             put("text", batch.text)
             put("mode", batch.mode)
             put("local_date", today().toString())
             put("images", buildJsonArray { encoded.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
+            if (figureParts.isNotEmpty()) put("figures", buildJsonArray { figureParts.forEach { add(it) } })
             putProvider("provider", cfg)
-        })
+        }) } catch (e: Exception) {
+            // nothing was saved, so the pictures are not needed
+            uploaded.forEach { p -> runCatching { api.deleteObject(FIGURES, p) }; figureFile(p).delete() }
+            throw e
+        }
         val messageId = res["user_message_id"]?.jsonPrimitive?.contentOrNull
         if (messageId != null && settings.keepPhotoCopies && bitmaps.isNotEmpty()) {
             withContext(Dispatchers.IO) {
@@ -548,6 +599,9 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     fun pendingListenedIds(): Set<String> = prefs.pendingListened.map { it.substringBefore('|') }.toSet()
 
     companion object {
+        const val FIGURES = "figures"
+        /** Long side a figure is stored at: sharp on a phone, about 100–300 KB. */
+        const val FIGURE_MAX_SIDE = 1600
         private const val SETTINGS_COLUMNS = "notes_provider,notes_model,placement_provider,placement_model,podcast_provider,podcast_model," +
             "rag_enabled,rag_selected_model,rag_active_model,podcast_enabled,interval_cap_days,daily_job_time," +
             "podcast_target_minutes,revisions_per_level,keep_photo_copies"

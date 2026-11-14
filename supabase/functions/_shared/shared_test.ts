@@ -5,7 +5,7 @@ import { buildPlacementRequest, resolvePlacement } from "./placement.ts";
 import { embed, generateJson, type ProviderCfg, ProviderError, toGeminiSchema } from "./providers.ts";
 import { candidates, repairMermaid } from "./mermaid_repair.ts";
 import { citeRefs, cleanModelUrl, extractUrls, linksBlock, refsForModel, refsToSave, stripRefs } from "./links.ts";
-import { buildOverviewRequest, buildReferenceRequest, buildSummaryRequest, cleanMindmap } from "./notes.ts";
+import { buildOverviewRequest, buildReferenceRequest, buildSummaryRequest, cleanMindmap, placeFigures } from "./notes.ts";
 
 const sections = [
   { id: "sec-1", title: "Basics", bullets: [{ id: "b-1", content: "CDN = servers near users" }, { id: "b-2", content: "Lower latency" }] },
@@ -36,7 +36,7 @@ Deno.test("schema only allows real refs", () => {
   const { refs } = renderPreviousNotes(sections, true);
   const s = JSON.stringify(buildSchema("topic", refs));
   assert(s.includes('"enum":["NEW","S1","S2"]') && s.includes('"enum":["END","S1.1","S1.2","S2.1"]'));
-  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid","code","table"]}') && s.includes('"required":["kind","text","lang","important","insert_after"]'));
+  assert(s.includes('"kind":{"type":"string","enum":["text","mermaid","code","table","figure"]}') && s.includes('"required":["kind","text","lang","caption","important","insert_after"]'));
   assert(s.includes('"required":["target","title","important","bullets"]'));
 });
 
@@ -179,6 +179,31 @@ Deno.test("mindmap names lose brackets and quotes; the root keeps its circle", (
   assertEquals(cleanMindmap('```\nmindmap\n  root((CDN (intro)))\n    Caching: "TTL"\n      Purge [path]\n\n```'),
     "mindmap\n  root((CDN intro))\n    Caching TTL\n      Purge path");
   assertEquals(cleanMindmap("flowchart TD\n  A --> B"), "flowchart TD\n  A --> B");
+});
+
+Deno.test("figures: keys become paths, extras dropped, unplaced ones kept; captions pass through", () => {
+  const { refs } = renderPreviousNotes([], true);
+  const p = toApplyPayload("project", { sections: [{ title: "Quadtree", bullets: [
+    { kind: "text", text: "Split cells with > 100 businesses" },
+    { kind: "figure", text: "[f1]", caption: "Quadtree split into four" },
+    { kind: "figure", text: "F9", caption: "unknown" },
+    { kind: "figure", text: "F1", caption: "again" },
+    { kind: "mermaid", text: "flowchart TD\n  A --> B", caption: "Two steps" },
+  ] }] }, refs);
+  assertEquals(p.sections[0].bullets[1], { kind: "figure", text: "F1", after_bullet_id: null, important: false, caption: "Quadtree split into four" });
+  assertEquals((p.sections[0].bullets[4] as { caption?: string }).caption, "Two steps");
+  assert(!("caption" in p.sections[0].bullets[0]));
+  const placed = placeFigures(p.sections as never, [{ key: "F1", path: "u/s/1.jpg" }, { key: "F2", path: "u/s/2.jpg" }]) as
+    { bullets: { kind: string; text: string; caption?: string }[] }[];
+  assertEquals(placed[0].bullets.filter((b) => b.kind === "figure").map((b) => [b.text, b.caption]),
+    [["u/s/1.jpg", "Quadtree split into four"], ["u/s/2.jpg", ""]]);          // F9 and the repeat dropped; F2 added at the end
+  const alone = placeFigures([], [{ key: "F1", path: "u/s/1.jpg" }]) as { title: string; bullets: unknown[] }[];
+  assertEquals([alone.length, alone[0].title, alone[0].bullets.length], [1, "Figures", 1]);
+  const r = buildNotesRequest({ sessionType: "project", sessionTitle: "x", previousNotes: "", refs, newText: "y", images: [],
+    figures: [{ key: "F1", image: { mime: "image/jpeg", data: "QUJD" } }] });
+  assert(r.system.includes("# FIGURES") && r.parts.some((x) => "text" in x && x.text === "[F1]") && r.parts.some((x) => "image" in x));
+  assertEquals(summarize({ new_bullets: 3, new_figures: 1, new_diagrams: 1, sections: [{ title: "Q", is_new: true, added: 3, inline: 0, figures: 1, diagrams: 1 }] }, 0),
+    "Added **1 point**, **1 diagram** and **1 figure** in a new section: **Q**.");
 });
 
 Deno.test("chat summary wording", () => {

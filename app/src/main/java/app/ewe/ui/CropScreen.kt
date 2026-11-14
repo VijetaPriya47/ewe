@@ -57,16 +57,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Full-screen cropper. [onCropped] gets a new JPEG file; Cancel keeps the photo as it was. */
+/**
+ * Full-screen cropper. [onCropped] gets a new JPEG file; Cancel keeps the photo as it was.
+ * With [onFigure], "Save as figure" keeps the cut-out as a picture for your notes and leaves the photo unchanged.
+ */
 @Composable
-fun CropDialog(uri: Uri, onDismiss: () -> Unit, onCropped: (Uri) -> Unit) {
+fun CropDialog(uri: Uri, onDismiss: () -> Unit, onFigure: ((Uri) -> Unit)? = null, onCropped: (Uri) -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        CropScreen(uri, onDismiss, onCropped)
+        CropScreen(uri, onDismiss, onFigure, onCropped)
     }
 }
 
 @Composable
-fun CropScreen(uri: Uri, onCancel: () -> Unit, onCropped: (Uri) -> Unit) {
+fun CropScreen(uri: Uri, onCancel: () -> Unit, onFigure: ((Uri) -> Unit)? = null, onCropped: (Uri) -> Unit) {
     val context = LocalContext.current
     val toast = LocalToast.current
     val scope = rememberCoroutineScope()
@@ -80,6 +83,21 @@ fun CropScreen(uri: Uri, onCancel: () -> Unit, onCropped: (Uri) -> Unit) {
             .onSuccess { original = it }
             .onFailure { toast("Could not open this photo."); onCancel() }
     }
+    fun save(prefix: String, then: (Uri) -> Unit) {
+        val bmp = original ?: return
+        if (saving) return
+        saving = true
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    val out = CropMath.apply(bmp, rect, turns)
+                    val dir = File(context.cacheDir, "crop").apply { mkdirs() }
+                    File(dir, "${prefix}_${System.currentTimeMillis()}.jpg").also { it.writeBytes(Images.jpeg(out, 92)) }
+                }
+            }.onSuccess { then(Uri.fromFile(it)) }
+                .onFailure { saving = false; toast("Could not crop this photo.") }
+        }
+    }
     // What is shown: the photo turned as chosen (the crop applies to this).
     val shown = remember(original, turns) { original?.let { CropMath.apply(it, CropRect(), turns) } }
 
@@ -88,20 +106,9 @@ fun CropScreen(uri: Uri, onCancel: () -> Unit, onCropped: (Uri) -> Unit) {
             BarButton("Cancel", C.G300) { onCancel() }
             Text("Crop photo", style = ts(16, 600, Color.White), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             BarButton(if (saving) "Saving…" else "Done", Color.White, bold = true) {
-                val bmp = original ?: return@BarButton
-                if (saving) return@BarButton
+                if (original == null || saving) return@BarButton
                 if (rect.isFull && turns % 4 == 0) { onCancel(); return@BarButton }
-                saving = true
-                scope.launch {
-                    runCatching {
-                        withContext(Dispatchers.Default) {
-                            val out = CropMath.apply(bmp, rect, turns)
-                            val dir = File(context.cacheDir, "crop").apply { mkdirs() }
-                            File(dir, "crop_${System.currentTimeMillis()}.jpg").also { it.writeBytes(Images.jpeg(out, 92)) }
-                        }
-                    }.onSuccess { onCropped(Uri.fromFile(it)) }
-                        .onFailure { saving = false; toast("Could not crop this photo.") }
-                }
+                save("crop", onCropped)
             }
         }
 
@@ -157,8 +164,10 @@ fun CropScreen(uri: Uri, onCancel: () -> Unit, onCropped: (Uri) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)) {
             PillButton(Ic.Rotate, "Rotate") { turns = (turns + 1) % 4; rect = CropRect() }
             PillButton(Ic.Replay, "Reset") { turns = 0; rect = CropRect() }
+            if (onFigure != null) PillButton(Ic.Image, "Save as figure") { save("figure", onFigure) }
         }
-        Text("Drag the corners or edges. Drag inside to move. Only the photo sent changes.",
+        Text(if (onFigure != null) "Drag the corners or edges. Done crops the photo; Save as figure keeps the cut-out as a picture in your notes."
+            else "Drag the corners or edges. Drag inside to move. Only the photo sent changes.",
             style = ts(12, 400, C.G400), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 16.dp))
     }

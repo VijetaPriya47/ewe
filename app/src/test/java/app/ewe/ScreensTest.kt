@@ -104,7 +104,9 @@ class ScreensTest {
             b("edge", "Cache miss → edge fetches from origin, then stores copy", 9, "cdn", 2.0),
             Bullet("code", "caching", "location /static/ {\n    expires 30d;\n    add_header Cache-Control \"public\";\n}", 4.0, d(0), "cdn", "m3", kind = "code", lang = "nginx"),
             Bullet("tbl", "caching", "| Header | Meaning |\n| --- | --- |\n| max-age | seconds fresh |\n| no-store | never cache |", 5.0, d(0), "cdn", "m3", kind = "table", highlight = "red"),
-            Bullet("diag", "edge", "flowchart TD\n  U[User] --> D[DNS]\n  D --> P[Nearest PoP]\n  P -->|hit| C[Cached copy]\n  P -->|miss| O[Origin]", 2.5, d(0), "cdn", "m3", kind = "mermaid"),
+            Bullet("diag", "edge", "flowchart TD\n  U[User] --> D[DNS]\n  D --> P[Nearest PoP]\n  P -->|hit| C[Cached copy]\n  P -->|miss| O[Origin]", 2.5, d(0), "cdn", "m3", kind = "mermaid",
+                caption = "How a request reaches the nearest PoP"),
+            Bullet("fig", "edge", FIGURE_PATH, 2.75, d(0), "cdn", "m3", kind = "figure", caption = "Map of PoPs from the slide"),
             b("caching", "TTL = how long edge keeps a copy before re-checking origin [[ref:aaaa-0004]]", 0, "cdn", 1.0).copy(important = true, highlight = "yellow"),
             b("caching", "Purge by path to remove stale content before TTL ends", 0, "cdn", 2.0),
             b("grid", "9×9 grid; each row, column and 3×3 box holds 1–9 once", 1, "sud", 1.0),
@@ -149,8 +151,19 @@ class ScreensTest {
             prefs.setApiKey(ProviderKind.GEMINI, "AIzaSyabcdefgh12345678k3Q")
         }
         File(context.filesDir, "snapshot.json").writeText(AppJson.encodeToString(Snapshot.serializer(), snap))
-        return Repository(context, prefs, Supabase(prefs))
+        return Repository(context, prefs, Supabase(prefs)).also { repo ->
+            // The figure is already on the phone, so no download is tried.
+            val bmp = android.graphics.Bitmap.createBitmap(320, 180, android.graphics.Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(bmp).apply {
+                drawColor(android.graphics.Color.rgb(240, 244, 255))
+                val dot = android.graphics.Paint().apply { color = android.graphics.Color.rgb(37, 99, 235) }
+                listOf(60f to 60f, 150f to 110f, 250f to 70f).forEach { (x, y) -> drawCircle(x, y, 14f, dot) }
+            }
+            repo.figureFile(FIGURE_PATH).apply { parentFile?.mkdirs() }.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }
+        }
     }
+
+    private val FIGURE_PATH = "u/cdn/fig1.jpg"
 
     private val configured = Settings(notesProvider = "anthropic", notesModel = "claude-sonnet-5-5", placementProvider = "gemini",
         placementModel = "gemini-flash-lite", podcastProvider = "anthropic", podcastModel = "claude-haiku-5-5", podcastEnabled = true)
@@ -327,6 +340,45 @@ class ScreensTest {
         shot("4_session_notes_diagram_code")
     }
 
+    @Test fun figure() {
+        val r = repo(snapshot(configured))
+        show("4_session_notes_figure") { SessionScreen(r, "cdn", true, {}, {}, {}) }
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Map of PoPs from the slide · Figure"))
+        compose.onNodeWithText("How a request reaches the nearest PoP · Mermaid").assertExists()
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Map of PoPs from the slide").fetchSemanticsNodes().isNotEmpty() }
+        shot("4_session_notes_figure")
+        // tap the label to select it: highlight and edit (the caption), no underline toggle
+        compose.onNodeWithText("Map of PoPs from the slide · Figure").performClick()
+        compose.onNodeWithContentDescription("Underline as important").assertDoesNotExist()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(androidx.compose.ui.test.hasContentDescription("Edit point"))
+        compose.onNodeWithContentDescription("Edit point").assertExists()
+        compose.onNodeWithContentDescription("Highlight yellow").assertExists()
+        shot("4_session_notes_figure_selected")
+    }
+
+    @Test fun figureViewer() {
+        val r = repo(snapshot(configured))
+        show("4_figure_open") { app.ewe.ui.FigureViewer(r.figureFile(FIGURE_PATH), "Map of PoPs from the slide") {} }
+        compose.onNodeWithContentDescription("Close").assertExists()
+    }
+
+    @Test fun cropSaveAsFigure() {
+        var figure: android.net.Uri? = null
+        var cropped: android.net.Uri? = null
+        show("10_crop_figure") { CropScreen(testPhoto(), onCancel = {}, onFigure = { figure = it }, onCropped = { cropped = it }) }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Crop area").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Crop area").performTouchInput {
+            swipe(Offset(3f, 3f), Offset(width / 2f, 3f), durationMillis = 400)   // keep the right (blue) half
+        }
+        compose.onNodeWithText("Save as figure").performClick()
+        compose.waitUntil(5_000) { figure != null }
+        val out = android.graphics.BitmapFactory.decodeFile(figure!!.path)
+        org.junit.Assert.assertTrue("figure ${out.width}×${out.height}", out.width in 180..220 && out.height in 190..200)
+        val px = out.getPixel(out.width / 2, out.height / 2)
+        org.junit.Assert.assertTrue("blue half kept", android.graphics.Color.blue(px) > 200 && android.graphics.Color.red(px) < 60)
+        org.junit.Assert.assertNull("the photo itself is left as it was", cropped)
+    }
+
     @Test fun options() {
         val r = repo(snapshot(configured))
         show("6_session_options") { SessionScreen(r, "cdn", false, {}, {}, {}) }
@@ -340,6 +392,14 @@ class ScreensTest {
         compose.onNodeWithText("Search sessions and notes").assertExists()
         compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("sudoku")
         shot("5_search")
+    }
+
+    @Test fun searchCaption() {
+        val r = repo(snapshot(configured))
+        show("5_search_caption") { SearchScreen(r, {}, { _, _ -> }) }
+        compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("map of pops")
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Figure").fetchSemanticsNodes().isNotEmpty() }
+        shot("5_search_caption")
     }
 
     @Test fun settingsOff() = show("7_settings_default") { SettingsScreen(repo(snapshot(), keys = false), {}) }

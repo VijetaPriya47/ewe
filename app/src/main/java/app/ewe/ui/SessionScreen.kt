@@ -82,6 +82,7 @@ import java.io.File
 import java.time.LocalDate
 
 private const val MAX_PHOTOS = 10
+private const val MAX_FIGURES = 6
 
 @Composable
 fun SessionScreen(repo: Repository, sessionId: String, startOnNotes: Boolean, onBack: () -> Unit,
@@ -165,6 +166,7 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
     val upload = uploads[session.id]
     var draft by rememberSaveable(session.id) { mutableStateOf("") }
     val picked = remember(session.id) { mutableStateListOf<Uri>() }
+    val figures = remember(session.id) { mutableStateListOf<Uri>() }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
 
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PHOTOS)) { uris ->
@@ -231,7 +233,11 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             }
         }
         if (upload != null) {
-            item { UserMessage(upload.text, upload.images.size, emptyList(), upload.images, upload.batches.firstOrNull()?.mode ?: "notes", null) }
+            item {
+                val figs = upload.batches.firstOrNull()?.figures.orEmpty()
+                UserMessage(upload.text, upload.images.size + figs.size, emptyList(), upload.images + figs, upload.batches.firstOrNull()?.mode ?: "notes",
+                    if (figs.isNotEmpty()) "${figs.size} figure${if (figs.size == 1) "" else "s"}" else null)
+            }
             item {
                 if (upload.error == null) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar()
@@ -276,8 +282,22 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
         }
         if (mode != "notes") Text(
             if (mode == "reference") "Goes to References only — nothing is added to Notes."
-            else "Goes to Overview as a diagram — nothing is added to Notes.",
+            else "Goes to Overview as a diagram — nothing is added to Notes." +
+                if (figures.isNotEmpty()) " Figures are only added in Notes mode." else "",
             style = ts(12, 400, C.G500), modifier = Modifier.padding(start = 4.dp))
+        if (figures.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(figures.toList()) { i, uri ->
+                Box {
+                    AsyncImage(uri, "Figure ${i + 1}", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp, 80.dp).clip(RoundedCornerShape(10.dp))
+                        .background(C.G200).border(2.dp, C.Purple, RoundedCornerShape(10.dp)))
+                    Text("Figure", style = ts(10, 600, C.White), modifier = Modifier.align(Alignment.BottomStart).padding(4.dp)
+                        .clip(RoundedCornerShape(6.dp)).background(C.Purple).padding(horizontal = 5.dp, vertical = 1.dp))
+                    Box(Modifier.align(Alignment.TopEnd).padding(2.dp).size(22.dp).clip(CircleShape).background(C.Ink).clickable { figures.remove(uri) }, contentAlignment = Alignment.Center) {
+                        Icon(Ic.Close, "Remove figure", tint = C.White, modifier = Modifier.size(12.dp))
+                    }
+                }
+            }
+        }
         if (picked.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(picked.toList()) { i, uri ->
                 Box {
@@ -294,7 +314,7 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
             }
         }
         val busy = upload != null && upload.error == null
-        val canSend = !busy && notesModelSet && (draft.isNotBlank() || picked.isNotEmpty())
+        val canSend = !busy && notesModelSet && (draft.isNotBlank() || picked.isNotEmpty() || (mode == "notes" && figures.isNotEmpty()))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).border(1.dp, C.G300, RoundedCornerShape(24.dp)).padding(6.dp), verticalAlignment = Alignment.Bottom) {
             Box {
                 IconBtn(Ic.Attach, "Attach photos or a PDF", enabled = !busy) { attachMenu = true }
@@ -323,14 +343,17 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), modifier = Modifier.fillMaxWidth())
             }
             IconBtn(Ic.Send, "Send", tint = C.White, bg = if (canSend) C.Ink else C.G400, iconSize = 20.dp, enabled = canSend) {
-                repo.send(session.id, ModeWord.strip(draft, mode).trim(), picked.toList(), mode)
-                draft = ""; picked.clear(); mode = "notes"
+                repo.send(session.id, ModeWord.strip(draft, mode).trim(), picked.toList(), mode, if (mode == "notes") figures.toList() else emptyList())
+                draft = ""; picked.clear(); if (mode == "notes") figures.clear(); mode = "notes"
             }
         }
     }
     cropping?.let { i ->
         picked.getOrNull(i)?.let { uri ->
-            CropDialog(uri, onDismiss = { cropping = null }) { cropped ->
+            CropDialog(uri, onDismiss = { cropping = null }, onFigure = { fig ->
+                if (figures.size >= MAX_FIGURES) toast("Up to $MAX_FIGURES figures per message.") else figures += fig
+                cropping = null
+            }) { cropped ->
                 if (i < picked.size) picked[i] = cropped
                 cropping = null
             }
@@ -479,11 +502,13 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                 val mark = highlightColor(p.bullet.highlight)
                 val toggle = { selected = if (isSel) null else key }
                 Column(Modifier.fillMaxWidth()) {
-                    if (p.bullet.isDiagram || p.bullet.isCode || p.bullet.isTable) Box(
+                    if (p.bullet.isDiagram || p.bullet.isCode || p.bullet.isTable || p.bullet.isFigure) Box(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(mark ?: androidx.compose.ui.graphics.Color.Transparent)
                             .padding(horizontal = if (mark != null) 6.dp else 0.dp)) {
                         when {
+                            p.bullet.isFigure -> FigureView(p.bullet.content, p.bullet.caption, load = { repo.loadFigure(it) }, onLabel = toggle)
                             p.bullet.isDiagram -> MermaidDiagram(p.bullet.content, onLabel = toggle, fixKey = p.bullet.id,
+                                label = p.bullet.caption?.takeIf { it.isNotBlank() }?.let { "$it · Mermaid" } ?: "Diagram · Mermaid",
                                 onFixed = { repo.saveRepairedDiagram(p.bullet.id, it) },
                                 aiFix = { code, error -> repo.fixDiagram(code, error) })
                             p.bullet.isCode -> CodeBlock(p.bullet.content, p.bullet.lang, onLabel = toggle)
@@ -525,7 +550,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
                             Swatch(C.HighlightRed, "Highlight red", p.bullet.highlight == "red") {
                                 run.go { repo.setHighlight(p.bullet.id, if (p.bullet.highlight == "red") null else "red") }
                             }
-                            if (!p.bullet.isDiagram && !p.bullet.isCode && !p.bullet.isTable) Box(
+                            if (p.bullet.kind == "text") Box(
                                 Modifier.size(40.dp).clip(CircleShape).clickable(role = Role.Switch) { run.go { repo.setImportant(p.bullet.id, !p.bullet.important) } }
                                     .semantics { contentDescription = if (p.bullet.important) "Remove underline" else "Underline as important" },
                                 contentAlignment = Alignment.Center) {
@@ -542,7 +567,19 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         }
     }
 
-    editing?.let { p ->
+    editing?.takeIf { it.bullet.isFigure }?.let { p ->
+        TextPrompt("Edit caption", p.bullet.caption.orEmpty(), "Save", onDismiss = { editing = null }) { text ->
+            editing = null
+            run.go { repo.editCaption(p.bullet.id, text) }
+        }
+    }
+    editing?.takeIf { it.bullet.isDiagram }?.let { p ->
+        DiagramEditDialog(p.bullet.caption.orEmpty(), p.bullet.content, onDismiss = { editing = null }) { caption, code ->
+            editing = null
+            run.go { repo.editDiagram(p.bullet.id, code, caption) }
+        }
+    }
+    editing?.takeIf { !it.bullet.isFigure && !it.bullet.isDiagram }?.let { p ->
         TextPrompt(when { p.bullet.isDiagram -> "Edit diagram code"; p.bullet.isCode -> "Edit code"; p.bullet.isTable -> "Edit table (Markdown)"; else -> "Edit point" }, Rich.refsToShown(p.bullet.content, snap), "Save", singleLine = false, onDismiss = { editing = null }) { text ->
             editing = null
             // [n] typed in the text cites reference n of the session the point belongs to
@@ -554,7 +591,7 @@ private fun ColumnScope.NotesTab(repo: Repository, snap: Snapshot, session: Sess
         if (p.link != null) Confirm("Remove from this topic?", "The point stays in the session it came from.", "Remove", onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.unlink(p.link.id) }
-        } else Confirm(when { p.bullet.isDiagram -> "Delete this diagram?"; p.bullet.isCode -> "Delete this code block?"; p.bullet.isTable -> "Delete this table?"; else -> "Delete this point?" }, "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
+        } else Confirm(when { p.bullet.isFigure -> "Delete this figure?"; p.bullet.isDiagram -> "Delete this diagram?"; p.bullet.isCode -> "Delete this code block?"; p.bullet.isTable -> "Delete this table?"; else -> "Delete this point?" }, "It is removed for good; no history is kept.", "Delete", danger = true, onDismiss = { deleting = null }) {
             deleting = null; selected = null
             run.go { repo.deleteBullet(p.bullet.id) }
         }

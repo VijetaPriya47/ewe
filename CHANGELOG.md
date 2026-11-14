@@ -3,6 +3,27 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.6.0 — 2026-11-14
+
+### Added
+- **Figures from your own photos.** In the cropper, **Save as figure** keeps the cut-out as a
+  figure (up to 6 per message); the photo itself stays as it was. Figures show in a row above the
+  message box, marked **Figure**, and are sent with Notes messages. The AI sees each figure, writes a
+  one-line caption, and puts it in the section it belongs to, right after the points it
+  illustrates. Tap a figure in Notes to see it full screen (pinch to zoom, double-tap to reset).
+- Figures are kept in a private storage folder that only you can read, and on your phone after the
+  first view, so they show offline. Deleting a figure deletes its picture too.
+- **Captions on diagrams.** The AI gives each diagram a one-line caption, shown under it.
+  Edit a diagram to change its caption and code together; edit a figure to change its caption.
+- Search finds figures and diagrams by their captions.
+- Captions are not read aloud, and figures are left out of read-aloud and the podcast.
+
+### Database
+- Migration `20261114200000_ewe_08_figures.sql`: note kind `figure`, a `caption` column, the private
+  `figures` storage bucket (5 MB, JPEG/PNG/WebP) with per-user folder policies; `apply_notes`
+  accepts figures only from your own folder; captions are used for linking and copied when a
+  session is recreated.
+
 ## 0.5.0 — 2026-11-14
 
 ### Added

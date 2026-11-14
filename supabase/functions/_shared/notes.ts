@@ -93,6 +93,13 @@ const COMMON_RULES = `
   Short cells. A table may hold those points instead of repeating them as text bullets.
 - "lang" is "" for every bullet that is not code.
 
+# FIGURES
+- FIGURES (after the NEW CONTENT) are pictures the user cut out of the pages: F1, F2, …
+- Put each figure in the notes exactly once, as a bullet with "kind": "figure", "text": its key
+  (e.g. "F1") and a "caption": one short line saying what it shows. Place it in the group it belongs
+  to, right after the bullets it illustrates. Never put a figure key in any other bullet.
+- "caption" is "" for every bullet that is not a figure or a diagram.
+
 # IMPORTANT POINTS
 - Set "important": true on the few bullets that matter most: key definitions, core rules, numbers or
   facts to remember, likely exam points. About 1 in 5 bullets at most; all others false.
@@ -119,6 +126,7 @@ const COMMON_RULES = `
 - Put every node label and edge label in double quotes: A["Fetch IDs (parallel)"], A -->|"miss"| B.
 - Keep it small: at most 12 nodes, short labels.
 - At most 2 diagrams per upload. Never repeat a diagram that already exists in PREVIOUS NOTES.
+- Give every diagram a "caption": one short line saying what it shows (e.g. "Request path: user → edge → origin").
 - A diagram never replaces text: every point must still be in a text bullet.
 `.trim();
 
@@ -150,6 +158,7 @@ export function buildNotesRequest(opts: {
   newText: string;
   images: ImageInput[];
   links?: string;
+  figures?: { key: string; image: ImageInput }[];
 }): JsonRequest {
   const system = [COMMON_RULES, opts.sessionType === "topic" ? TOPIC_RULES : PROJECT_RULES].join("\n\n");
 
@@ -166,6 +175,11 @@ ${opts.images.length ? `[${opts.images.length} image(s) attached below]\n` : ""}
   const parts: Part[] = [{ text: header }];
   for (const image of opts.images) parts.push({ image });
   parts.push({ text: "=== END OF NEW CONTENT ===\n\n" + (opts.links ?? "=== KNOWN LINKS ===\n(none)\n=== END OF KNOWN LINKS ===") });
+  if (opts.figures?.length) {
+    parts.push({ text: "\n=== FIGURES (cut out of the pages above; place each one once) ===" });
+    for (const f of opts.figures) { parts.push({ text: `[${f.key}]` }); parts.push({ image: f.image }); }
+    parts.push({ text: "=== END OF FIGURES ===" });
+  }
 
   return { system, parts, schema: buildSchema(opts.sessionType, opts.refs), schemaName: "notes" };
 }
@@ -176,12 +190,13 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
   const bullet: Record<string, unknown> = {
     type: "object", additionalProperties: false,
     properties: {
-      kind: { type: "string", enum: ["text", "mermaid", "code", "table"] },
+      kind: { type: "string", enum: ["text", "mermaid", "code", "table", "figure"] },
       text: { type: "string" },
       lang: { type: "string" },
+      caption: { type: "string" },
       important: { type: "boolean" },
     },
-    required: ["kind", "text", "lang", "important"],
+    required: ["kind", "text", "lang", "caption", "important"],
   };
   const group: Record<string, unknown> = {
     type: "object", additionalProperties: false,
@@ -193,7 +208,7 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
     const bRefs = [...refs.bulletByRef.keys()], sRefs = [...refs.sectionByRef.keys()];
     (bullet.properties as Record<string, unknown>).insert_after =
       bRefs.length <= MAX_ENUM ? { type: "string", enum: ["END", ...bRefs] } : { type: "string" };
-    bullet.required = ["kind", "text", "lang", "important", "insert_after"];
+    bullet.required = ["kind", "text", "lang", "caption", "important", "insert_after"];
     (group.properties as Record<string, unknown>).target =
       sRefs.length <= MAX_ENUM ? { type: "string", enum: ["NEW", ...sRefs] } : { type: "string" };
     group.required = ["target", "title", "important", "bullets"];
@@ -210,10 +225,10 @@ export function buildSchema(sessionType: SessionType, refs: RefMaps): Record<str
   };
 }
 
-interface ModelBullet { kind?: string; text?: string; lang?: string; important?: boolean; insert_after?: string }
+interface ModelBullet { kind?: string; text?: string; lang?: string; caption?: string; important?: boolean; insert_after?: string }
 interface ModelGroup { target?: string; title?: string; important?: boolean; bullets?: ModelBullet[] }
 
-type Kind = "text" | "mermaid" | "code" | "table";
+type Kind = "text" | "mermaid" | "code" | "table" | "figure";
 
 /** The kind and the cleaned text of one model bullet; an unusable table becomes plain text. */
 function normalise(b: ModelBullet): { kind: Kind; text: string } {
@@ -222,6 +237,7 @@ function normalise(b: ModelBullet): { kind: Kind; text: string } {
     case "mermaid": return { kind: "mermaid", text: repairMermaid(cleanMermaid(raw)) };
     case "code": return { kind: "code", text: cleanCode(raw) };
     case "table": return isTable(raw) ? { kind: "table", text: raw.trim() } : { kind: "text", text: raw.trim() };
+    case "figure": return { kind: "figure", text: raw.replace(/[\[\]\s]/g, "").toUpperCase() };
     default: return { kind: "text", text: raw.trim() };
   }
 }
@@ -245,6 +261,7 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
             return {
               kind, text, after_bullet_id: anchor, important: b.important === true,
               ...(kind === "code" ? { lang: String(b.lang ?? "").trim().toLowerCase() } : {}),
+              ...(kind === "figure" || kind === "mermaid" ? { caption: String(b.caption ?? "").trim().slice(0, 200) } : {}),
             };
           })
           .filter((b) => b.text.trim().length > 0),
@@ -253,22 +270,23 @@ export function toApplyPayload(sessionType: SessionType, output: { sections?: Mo
   };
 }
 
-interface AppliedSection { title: string; is_new: boolean; added: number; inline: number; diagrams?: number; tables?: number; code?: number }
+interface AppliedSection { title: string; is_new: boolean; added: number; inline: number; diagrams?: number; tables?: number; code?: number; figures?: number }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** The short chat reply. **bold** is rendered by the app. Diagrams, tables and code are counted apart from points. */
 export function summarize(
-  result: { new_bullets: number; new_diagrams?: number; new_tables?: number; new_code?: number; sections: AppliedSection[] },
+  result: { new_bullets: number; new_diagrams?: number; new_tables?: number; new_code?: number; new_figures?: number; sections: AppliedSection[] },
   skipped: number,
 ): string {
   const skippedLine = skipped > 0 ? `\n${plural(skipped, "point")} skipped: already in your notes.` : "";
   if (result.new_bullets === 0) return "Nothing new here — your notes already cover this.";
-  const extras = (s: { diagrams?: number; tables?: number; code?: number }) =>
-    [[s.diagrams ?? 0, "diagram"], [s.tables ?? 0, "table"], [s.code ?? 0, "code block"]] as [number, string][];
-  const extraTotal = (s: { diagrams?: number; tables?: number; code?: number }) => extras(s).reduce((n, [k]) => n + k, 0);
+  type Extras = { diagrams?: number; tables?: number; code?: number; figures?: number };
+  const extras = (s: Extras) =>
+    [[s.diagrams ?? 0, "diagram"], [s.tables ?? 0, "table"], [s.code ?? 0, "code block"], [s.figures ?? 0, "figure"]] as [number, string][];
+  const extraTotal = (s: Extras) => extras(s).reduce((n, [k]) => n + k, 0);
 
-  const total = { diagrams: result.new_diagrams, tables: result.new_tables, code: result.new_code };
+  const total = { diagrams: result.new_diagrams, tables: result.new_tables, code: result.new_code, figures: result.new_figures };
   const points = result.new_bullets - extraTotal(total);
   const parts = [points > 0 ? `**${plural(points, "point")}**` : "",
     ...extras(total).filter(([n]) => n > 0).map(([n, w]) => `**${plural(n, w)}**`)].filter(Boolean);
@@ -382,4 +400,34 @@ export function cleanMindmap(code: string): string {
     const indent = line.match(/^\s*/)![0];
     return indent + line.trim().replace(/[()\[\]{}"`:]/g, "").replace(/\s{2,}/g, " ");
   }).filter((l) => l.trim().length > 0).join("\n");
+}
+
+// ───────────────────────── figures: model keys → storage paths ─────────────────────────
+type PayloadBullet = { kind: string; text: string; after_bullet_id: string | null; important: boolean; caption?: string; lang?: string };
+type PayloadGroup = { section_id: string | null; title: string; important: boolean; bullets: PayloadBullet[] };
+
+/**
+ * Figure bullets name a key (F1…); swap in the stored picture's path. Unknown or repeated keys are
+ * dropped, and a figure the model did not place is added to the end anyway, so none is lost.
+ */
+export function placeFigures(groups: PayloadGroup[], figures: { key: string; path: string }[]): PayloadGroup[] {
+  const paths = new Map(figures.map((f) => [f.key.toUpperCase(), f.path]));
+  const used = new Set<string>();
+  for (const g of groups) {
+    g.bullets = g.bullets.flatMap((b) => {
+      if (b.kind !== "figure") return [b];
+      const path = paths.get(b.text);
+      if (!path || used.has(b.text)) return [];
+      used.add(b.text);
+      return [{ ...b, text: path }];
+    });
+  }
+  const left = figures.filter((f) => !used.has(f.key.toUpperCase()));
+  if (left.length) {
+    const extra = left.map((f) => ({ kind: "figure", text: f.path, after_bullet_id: null, important: false, caption: "" }));
+    const last = groups[groups.length - 1];
+    if (last) last.bullets.push(...extra);
+    else groups.push({ section_id: null, title: "Figures", important: false, bullets: extra });
+  }
+  return groups.filter((g) => g.bullets.length > 0);
 }
