@@ -188,7 +188,8 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                     }
                     if (engine == "gnani") {
                         Divider()
-                        SettingRow("Gnani API key", if (prefs.gnaniKey.isBlank()) "No key yet" else "${maskedKey(prefs.gnaniKey)} · connected") {
+                        SettingRow("Gnani API keys", when (val n = prefs.gnaniKeys.size) { 0 -> "No key yet"; 1 -> "${maskedKey(prefs.gnaniKey)} · connected"
+                            else -> "$n keys · ${maskedKey(prefs.gnaniKey)} first, the rest as backup" }) {
                             SmallButton(if (prefs.gnaniKey.isBlank()) "Add" else "Edit") { dialog = "key" }
                         }
                         Divider()
@@ -208,7 +209,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                                 test = "Loading…"; testError = null
                                 scope.launch {
                                     try {
-                                        val cfg = GnaniCfg(prefs.gnaniKey, prefs.gnaniModel, prefs.gnaniVoice, prefs.gnaniLanguage)
+                                        val cfg = GnaniCfg(prefs.gnaniKey, prefs.gnaniModel, prefs.gnaniVoice, prefs.gnaniLanguage, prefs.gnaniKeys.drop(1))
                                         val bytes = GnaniTts().synthesize(cfg, GnaniTts.SAMPLE)
                                         val file = java.io.File(context.cacheDir, "gnani_sample.mp3").also { it.writeBytes(bytes) }
                                         test = "Playing…"
@@ -223,7 +224,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                     }
                 }
                 when (dialog) {
-                    "key" -> GnaniKeyDialog(prefs.gnaniKey, onDismiss = { dialog = null }) { k -> prefs.gnaniKey = k; dialog = null; gnaniTick++ }
+                    "key" -> GnaniKeyDialog(prefs.gnaniKeys, onDismiss = { dialog = null }) { k -> prefs.gnaniKeys = k; GnaniTts.resetDeadKeys(); dialog = null; gnaniTick++ }
                     "voice" -> GnaniVoiceDialog(prefs.gnaniModel, prefs.gnaniVoice, onDismiss = { dialog = null }) { model, voice ->
                         prefs.gnaniModel = model; prefs.gnaniVoice = voice.name
                         prefs.gnaniLanguage = GnaniTts.languageFor(model, voice.name, if (prefs.gnaniLanguage == "auto" || model != "timbre-v3.0") "en-IN" else prefs.gnaniLanguage)

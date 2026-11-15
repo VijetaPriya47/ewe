@@ -503,10 +503,10 @@ class ScreensTest {
 
     @Test fun voiceSettings() {
         val r = repo(snapshot(configured))
-        r.prefs.speechEngine = "gnani"; r.prefs.gnaniKey = "gn-key-abcdef-1234"
+        r.prefs.speechEngine = "gnani"; r.prefs.gnaniKeys = listOf("gn-key-abcdef-1234", "gn-backup-5678")
         show("7_settings_voice") { SettingsScreen(r, {}) }
-        compose.onNodeWithText("Gnani API key").performScrollTo()
-        compose.onNodeWithText("…1234 · connected").assertExists()
+        compose.onNodeWithText("Gnani API keys").performScrollTo()
+        compose.onNodeWithText("2 keys", substring = true).assertExists()
         compose.onNodeWithText("Kaveri").assertExists()
         compose.onNodeWithText("Gnani is a paid service", substring = true).assertExists()
         shot("7_settings_voice_gnani")

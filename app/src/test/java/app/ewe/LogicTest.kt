@@ -548,4 +548,41 @@ class LogicTest {
         assertEquals("Hindi", g.languageName("hi-IN"))
         assertTrue(g.describe(500, """{"success":false,"message":"We are facing technical difficulties.","status_code":500}""".toByteArray()).contains("technical difficulties"))
     }
+
+    @Test fun `gnani falls back to the next key`(): Unit = runBlocking {
+        val seen = ArrayList<String>()
+        val audio = okio.Buffer().write(ByteArray(400))
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val key = request.getHeader("X-API-Key-ID").orEmpty(); seen += key
+                return when (key) {
+                    "fb-empty" -> MockResponse().setResponseCode(402).setBody("{}")
+                    "fb-bad" -> MockResponse().setResponseCode(401).setBody("{}")
+                    "fb-good" -> MockResponse().setBody(audio.clone())
+                    else -> MockResponse().setResponseCode(400).setBody("""{"success":false,"message":"bad voice","status_code":400}""")
+                }
+            }
+        }
+        server.start()
+        val g = app.ewe.ai.GnaniTts(baseUrl = server.url("/").toString().trimEnd('/'), pause = {})
+        val cfg = app.ewe.ai.GnaniCfg("fb-empty", "timbre-v2.5", "Kaveri", "en-IN", listOf("fb-bad", "fb-good"))
+        assertEquals(400, g.synthesize(cfg, "one").size)
+        assertEquals(listOf("fb-empty", "fb-bad", "fb-good"), seen)
+        seen.clear()
+        assertEquals(400, g.synthesize(cfg, "two").size)                  // dead keys are not tried again
+        assertEquals(listOf("fb-good"), seen)
+        // a problem that isn't the key's (bad voice) stops at once instead of burning through the keys
+        seen.clear()
+        val other = app.ewe.ai.GnaniCfg("fb-other1", "timbre-v2.5", "Nope", "en-IN", listOf("fb-other2"))
+        assertTrue(runCatching { g.synthesize(other, "x") }.exceptionOrNull()!!.message.orEmpty().contains("bad voice"))
+        assertEquals(listOf("fb-other1"), seen)
+        // all keys dead: the last error is reported
+        val dead = app.ewe.ai.GnaniCfg("fb-empty", "timbre-v2.5", "Kaveri", "en-IN", listOf("fb-bad"))
+        assertTrue(runCatching { g.synthesize(dead, "y") }.exceptionOrNull()!!.message.orEmpty().isNotEmpty())
+        // pasting a whole table finds every key
+        val table = "| 1 | `vach_aB1_c-d` |\n| 2 | `vach_Z9y8` |\n| 3 | `vach_aB1_c-d` |"
+        assertEquals(listOf("vach_aB1_c-d", "vach_Z9y8"), app.ewe.ai.GnaniTts.parseKeys(table))
+        server.shutdown()
+    }
 }

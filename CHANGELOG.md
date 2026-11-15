@@ -3,6 +3,15 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.15.0 — 2026-11-15
+
+### Added
+- **Backup Gnani keys.** Settings › Voice › **Gnani API keys** takes several keys: paste them one per
+  line, or paste a whole list or table and the keys are picked out. The first is used; if Gnani rejects
+  it or says it's out of credit, the next one takes over, and so on. A key that ran out is skipped for
+  the rest of the session, so it isn't retried on every line. Other problems (a busy server, a wrong
+  voice) don't use up your backups. All keys stay on your phone.
+
 ## 0.14.0 — 2026-11-15
 
 ### Added

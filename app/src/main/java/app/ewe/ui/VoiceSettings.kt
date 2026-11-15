@@ -52,22 +52,26 @@ fun Segmented(options: List<Pair<String, String>>, selected: String, onSelect: (
 
 /** The Gnani API key: kept on this phone only. */
 @Composable
-fun GnaniKeyDialog(key: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var k by remember { mutableStateOf(key) }
+fun GnaniKeyDialog(keys: List<String>, onDismiss: () -> Unit, onSave: (List<String>) -> Unit) {
+    var k by remember { mutableStateOf(keys.joinToString("\n")) }
+    val found = GnaniTts.parseKeys(k)
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = C.White,
-        title = { Text("Gnani API key", style = ts(18, 600)) },
+        title = { Text("Gnani API keys", style = ts(18, 600)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(k, { k = it }, singleLine = true, label = { Text("API key") }, textStyle = ts(15),
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Text("Stored only on this phone. It is sent to Gnani with each request and never saved on a server.", style = ts(13, 400, C.G600, 1.45f))
+                OutlinedTextField(k, { k = it }, label = { Text("API keys") }, textStyle = ts(13), minLines = 3, maxLines = 6,
+                    modifier = Modifier.fillMaxWidth())
+                Text(if (found.isEmpty()) "Paste one key, or several (one per line, or a whole list)."
+                     else "${found.size} key${if (found.size == 1) "" else "s"} found. The first is used; if it's rejected or out of credit, the next one takes over.",
+                    style = ts(13, 400, C.G600, 1.45f))
+                Text("Stored only on this phone. Each is sent to Gnani with requests and never saved on a server.", style = ts(12, 400, C.G500, 1.4f))
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(k) }, enabled = k.isNotBlank()) { Text("Save", style = ts(15, 600)) } },
+        confirmButton = { TextButton(onClick = { onSave(found) }, enabled = found.isNotEmpty()) { Text("Save", style = ts(15, 600)) } },
         dismissButton = {
             Row {
-                if (key.isNotEmpty()) TextButton(onClick = { onSave("") }) { Text("Remove", style = ts(15, 500, C.Red)) }
+                if (keys.isNotEmpty()) TextButton(onClick = { onSave(emptyList()) }) { Text("Remove", style = ts(15, 500, C.Red)) }
                 TextButton(onClick = onDismiss) { Text("Cancel", style = ts(15, 500, C.G600)) }
             }
         },

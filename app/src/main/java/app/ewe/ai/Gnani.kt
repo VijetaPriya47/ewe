@@ -21,7 +21,11 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** What the Gnani voice is set to: kept on this phone, with the key. */
-data class GnaniCfg(val apiKey: String, val model: String, val voice: String, val language: String)
+data class GnaniCfg(val apiKey: String, val model: String, val voice: String, val language: String,
+                    /** Tried in order when [apiKey] is rejected or out of credit. */
+                    val backupKeys: List<String> = emptyList()) {
+    val keys: List<String> get() = (listOf(apiKey) + backupKeys).filter { it.isNotBlank() }.distinct()
+}
 
 /** One voice from Gnani's catalog. */
 data class GnaniVoice(val name: String, val gender: String, val language: String, val persona: String)
@@ -55,10 +59,26 @@ class GnaniTts(
     }
 
     /** One piece of text → MP3 bytes. Busy servers and dropped connections are retried a few times. */
-    suspend fun synthesize(cfg: GnaniCfg, text: String): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun synthesize(cfg: GnaniCfg, text: String): ByteArray {
+        // keys that ran out are skipped for the rest of this run, so each line doesn't re-try them
+        val keys = cfg.keys.filter { it !in dead }.ifEmpty { cfg.keys }
+        var failure: ApiException? = null
+        for (key in keys) {
+            try {
+                return synthesizeWith(cfg, key, text)
+            } catch (e: ApiException) {
+                // no credit, bad key, key not allowed: try the next one. Anything else is not the key's fault.
+                if (e.status !in setOf(401, 402, 403)) throw e
+                dead += key; failure = e
+            }
+        }
+        throw failure ?: ApiException("Add a Gnani API key in Settings › Voice.")
+    }
+
+    private suspend fun synthesizeWith(cfg: GnaniCfg, key: String, text: String): ByteArray = withContext(Dispatchers.IO) {
         require(text.isNotBlank()) { "nothing to say" }
         val request = Request.Builder().url("$baseUrl/api/v1/tts/inference")
-            .header("X-API-Key-ID", cfg.apiKey)
+            .header("X-API-Key-ID", key)
             .post(AppJson.encodeToString(JsonObject.serializer(), body(cfg, text)).toRequestBody("application/json".toMediaType()))
             .build()
         var last: ApiException? = null
@@ -99,6 +119,14 @@ class GnaniTts(
     }
 
     companion object {
+        /** Keys that were refused or out of credit since the app started. */
+        private val dead = java.util.Collections.synchronizedSet(HashSet<String>())
+        fun resetDeadKeys() = dead.clear()
+
+        /** Every key in pasted text, whatever surrounds it (a table, commas, quotes, one per line). */
+        fun parseKeys(text: String): List<String> =
+            Regex("vach_[A-Za-z0-9_\\-]+").findAll(text).map { it.value }.distinct().toList()
+
         const val BASE_URL = "https://api.vachana.ai"
         const val ATTEMPTS = 3
         /** Characters per request: well inside what one request handles (longer text can fail with a 500). */
@@ -123,7 +151,7 @@ class GnaniTts(
             val message = ((detail ?: root)?.get("message") as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             return when (code) {
                 401 -> "Gnani rejected the API key. Check it in Settings › Voice."
-                402 -> "Your Gnani account is out of credit."
+                402 -> "Your Gnani account is out of credit (no backup key had any left)."
                 403 -> "This Gnani key can't use text-to-speech" + if (message.isNotEmpty()) " ($message)." else "."
                 429 -> "Gnani is busy: only one request can run at a time on this account. Try again in a moment."
                 else -> "Gnani error $code" + if (message.isNotEmpty()) ": ${message.take(200)}" else "."

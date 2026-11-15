@@ -70,9 +70,11 @@ class LocalPrefs(context: Context) {
     var speechEngine: String
         get() = sp.getString("speech_engine", "phone") ?: "phone"
         set(v) = sp.edit().putString("speech_engine", v).apply()
-    var gnaniKey: String
-        get() = sp.getString("gnani_key", "") ?: ""
-        set(v) = sp.edit().putString("gnani_key", v.trim()).apply()
+    /** Several keys, one per line: the first is used, the rest take over when it is rejected or out of credit. */
+    var gnaniKeys: List<String>
+        get() = (sp.getString("gnani_key", "") ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
+        set(v) = sp.edit().putString("gnani_key", v.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")).apply()
+    val gnaniKey: String get() = gnaniKeys.firstOrNull().orEmpty()
     var gnaniModel: String
         get() = sp.getString("gnani_model", "timbre-v2.5") ?: "timbre-v2.5"
         set(v) = sp.edit().putString("gnani_model", v).apply()
@@ -85,7 +87,7 @@ class LocalPrefs(context: Context) {
 
     /** The Gnani settings when it is the chosen voice and has a key; null means "use the phone's voice". */
     fun gnani(): app.ewe.ai.GnaniCfg? =
-        if (speechEngine == "gnani" && gnaniKey.isNotBlank()) app.ewe.ai.GnaniCfg(gnaniKey, gnaniModel, gnaniVoice, gnaniLanguage) else null
+        if (speechEngine == "gnani" && gnaniKey.isNotBlank()) app.ewe.ai.GnaniCfg(gnaniKey, gnaniModel, gnaniVoice, gnaniLanguage, gnaniKeys.drop(1)) else null
 
     /** "Mark as listened" pressed while offline: "scheduleId|yyyy-MM-dd", sent on the next sync. */
     var pendingListened: Set<String>
