@@ -81,8 +81,8 @@ class PrepareWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             }
 
             val dir = store.dir(today)
-            dir.listFiles { f -> f.extension == "wav" }?.forEach { it.delete() }
-            val speech = Speech(applicationContext)
+            dir.listFiles { f -> f.extension == "wav" || f.extension == "mp3" }?.forEach { it.delete() }
+            val speech = Speech(applicationContext, repo.prefs.gnani())
             val chapters = ArrayList<Chapter>()
             try {
                 speech.start()

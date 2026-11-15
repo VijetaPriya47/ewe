@@ -475,4 +475,77 @@ class LogicTest {
         // double-tap again: whole figure
         assertEquals(app.ewe.ui.Zoom.View(), z.doubleTap(v, 0f, 0f, fitted, box))
     }
+
+    // ───────────── Gnani text-to-speech ─────────────
+    @Test fun `gnani speaks its wire format and reports errors`(): Unit = runBlocking {
+        val seen = ArrayList<RecordedRequest>()
+        var busy = 1
+        val audio = okio.Buffer().write(ByteArray(400) { it.toByte() })
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                seen += request
+                val text = request.body.clone().readUtf8()
+                return when {
+                    request.getHeader("X-API-Key-ID") == "bad" -> MockResponse().setResponseCode(401).setBody("""{"detail":{"error_code":"INVALID_API_KEY","message":"Unauthorized","status_code":401}}""")
+                    request.getHeader("X-API-Key-ID") == "broke" -> MockResponse().setResponseCode(402).setBody("{}")
+                    text.contains("\"voice\":\"Nope\"") -> MockResponse().setResponseCode(400).setBody("""{"success":false,"message":"Voice 'Nope' is not available for model timbre-v2.5","status_code":400}""")
+                    text.contains("busy-once") && busy-- > 0 -> MockResponse().setResponseCode(429).setBody("""{"detail":{"error_code":"RATE_LIMITED","message":"Only 1 active request","status_code":429}}""")
+                    text.contains("always-busy") -> MockResponse().setResponseCode(429).setBody("{}")
+                    else -> MockResponse().setHeader("Content-Type", "audio/mpeg").setBody(audio.clone())
+                }
+            }
+        }
+        server.start()
+        val g = app.ewe.ai.GnaniTts(baseUrl = server.url("/").toString().trimEnd('/'), pause = {})
+        val cfg = app.ewe.ai.GnaniCfg("k-123", "timbre-v2.5", "Kaveri", "en-IN")
+
+        assertEquals(400, g.synthesize(cfg, "Hello there").size)
+        val r = seen.last()
+        assertEquals("/api/v1/tts/inference", r.path); assertEquals("POST", r.method); assertEquals("k-123", r.getHeader("X-API-Key-ID"))
+        val body = AppJson.parseToJsonElement(r.body.readUtf8()).jsonObject
+        assertEquals("Hello there", body["text"]!!.jsonPrimitive.content)
+        assertEquals("Kaveri", body["voice"]!!.jsonPrimitive.content); assertEquals("timbre-v2.5", body["model"]!!.jsonPrimitive.content)
+        assertEquals("en-IN", body["language"]!!.jsonPrimitive.content); assertEquals("1.0", body["speed"]!!.jsonPrimitive.content)
+        val ac = body["audio_config"]!!.jsonObject
+        assertEquals("mp3", ac["container"]!!.jsonPrimitive.content); assertEquals("64k", ac["bitrate"]!!.jsonPrimitive.content)
+        assertEquals("24000", ac["sample_rate"]!!.jsonPrimitive.content); assertEquals("1", ac["num_channels"]!!.jsonPrimitive.content)
+
+        suspend fun fail(c: app.ewe.ai.GnaniCfg, text: String) = runCatching { g.synthesize(c, text) }.exceptionOrNull()!!.message.orEmpty()
+        assertTrue(fail(cfg.copy(apiKey = "bad"), "hi").contains("rejected the API key"))
+        assertTrue(fail(cfg.copy(apiKey = "broke"), "hi").contains("out of credit"))
+        assertTrue(fail(cfg.copy(voice = "Nope"), "hi").contains("Voice 'Nope' is not available"))
+        val before = seen.size
+        assertEquals(400, g.synthesize(cfg, "busy-once please").size)          // one 429, then success
+        assertEquals(2, seen.size - before)
+        val before2 = seen.size
+        assertTrue(fail(cfg, "always-busy").contains("only one request can run at a time"))
+        assertEquals(3, seen.size - before2)                                    // gave up after three tries
+
+        // long text → one request per chunk, files in order
+        val dir = kotlin.io.path.createTempDirectory("gnani").toFile()
+        val long = (1..120).joinToString(" ") { "Sentence number $it is here." }
+        val files = g.synthesizeFiles(cfg, long, dir, "seg0")
+        assertTrue(files.size > 3 && files.all { it.length() == 400L && it.extension == "mp3" })
+        assertEquals((0 until files.size).map { "seg0_$it.mp3" }, files.map { it.name })
+        dir.deleteRecursively(); server.shutdown()
+    }
+
+    @Test fun gnaniVoiceCatalog() {
+        val g = app.ewe.ai.GnaniTts
+        assertEquals(42, g.V25.size); assertEquals(13, g.V30.size)
+        assertEquals(42, g.V25.map { it.name }.distinct().size)
+        // every v2.5 voice has a language the API accepts, and a gender to filter by
+        val codes = g.LANGUAGES.map { it.first }.toSet()
+        assertTrue(g.V25.all { it.language in codes && it.gender in setOf("Female", "Male") })
+        assertEquals(setOf("Female", "Male"), g.V30.map { it.gender }.toSet())
+        assertEquals(7, g.V30.count { it.gender == "Female" }); assertEquals(6, g.V30.count { it.gender == "Male" })
+        // a voice only belongs to its own model
+        assertTrue(g.voices("timbre-v2.5").none { it.name == "Shivani" } && g.voices("timbre-v3.0").none { it.name == "Kaveri" })
+        assertEquals("Kaveri", g.defaultVoice("timbre-v2.5").name); assertEquals("Shivani", g.defaultVoice("timbre-v3.0").name)
+        assertEquals("hi-IN", g.languageFor("timbre-v2.5", "Nalini", "en-IN"))      // v2.5: the voice's own language
+        assertEquals("ta-IN", g.languageFor("timbre-v3.0", "Shivani", "ta-IN"))     // v3.0: as chosen
+        assertEquals("Hindi", g.languageName("hi-IN"))
+        assertTrue(g.describe(500, """{"success":false,"message":"We are facing technical difficulties.","status_code":500}""".toByteArray()).contains("technical difficulties"))
+    }
 }

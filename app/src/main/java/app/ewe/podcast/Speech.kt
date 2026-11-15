@@ -13,12 +13,16 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
-/** Android's built-in text-to-speech, writing audio files. No AI, no cost. */
-class Speech(private val context: Context) {
+/**
+ * Turns script text into audio files: Gnani's voice when it is chosen in Settings, otherwise Android's
+ * built-in text-to-speech (no AI, no cost).
+ */
+class Speech(private val context: Context, private val gnani: app.ewe.ai.GnaniCfg? = null, private val gnaniTts: app.ewe.ai.GnaniTts = app.ewe.ai.GnaniTts()) {
     private var tts: TextToSpeech? = null
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
     suspend fun start() {
+        if (gnani != null) return          // Gnani needs no speech engine on the phone
         val ready = CompletableDeferred<Int>()
         val engine = withContext(Dispatchers.Main) { TextToSpeech(context) { status -> ready.complete(status) } }
         if (withTimeout(20_000) { ready.await() } != TextToSpeech.SUCCESS) {
@@ -39,6 +43,7 @@ class Speech(private val context: Context) {
 
     /** Speaks [text] into WAV files inside [dir], named [name]_0.wav, [name]_1.wav … */
     suspend fun synthesize(text: String, dir: File, name: String): List<AudioFile> {
+        if (gnani != null) return gnaniTts.synthesizeFiles(gnani, text, dir, name).map { AudioFile(it.absolutePath, durationOf(it)) }
         val engine = tts ?: throw IllegalStateException("Speech engine not started")
         val max = (TextToSpeech.getMaxSpeechInputLength() - 200).coerceIn(500, 3000)
         return Script.chunks(text, max).mapIndexedNotNull { i, chunk ->

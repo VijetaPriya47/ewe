@@ -3,6 +3,26 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.14.0 — 2026-11-15
+
+### Added
+- **Gnani voices for read-aloud and the daily podcast** (Settings › Voice). Choose **Phone** (Android's
+  own voice: free, works offline, the default) or **Gnani** (Gnani Vachana text-to-speech).
+  - **Gnani API key**: entered in Settings and kept only on your phone, like your AI keys.
+  - **Voice**: pick the model, **Timbre v2.5** (42 voices, each for one language) or **Timbre v3.0**
+    (13 voices that speak every language), then a voice from the list, filtered by **Female / Male**
+    and, for v2.5, by language (English, Hindi, Hinglish, Tamil, Telugu, Kannada, Malayalam, Marathi,
+    Bengali, Gujarati, Punjabi). With v3.0 you also choose the language, or Auto-detect.
+  - **Play sample** tries the chosen voice right away and shows Gnani's error message if something is
+    wrong (bad key, no credit, busy).
+  - **Read-aloud** fetches each line from Gnani as it goes and prepares the next line while the current
+    one plays. Pause, resume, skip by section, the lock-screen controls and the 0.8× – 1.5× speed all
+    work as before. Lines already fetched are reused when you go back or resume.
+  - **Daily podcast** is recorded with the chosen voice (MP3, 24 kHz mono, a few MB per episode).
+  - Gnani allows one request at a time, so everything is sent one after another; busy or failed requests
+    are retried up to three times. If Gnani is chosen but no key is set, the phone's voice is used.
+  - Gnani is a paid service and the text being read is sent to it.
+
 ## 0.13.0 — 2026-11-15
 
 ### Changed

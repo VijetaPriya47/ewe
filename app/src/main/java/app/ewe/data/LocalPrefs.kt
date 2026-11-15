@@ -65,6 +65,28 @@ class LocalPrefs(context: Context) {
         return ProviderCfg(kind, apiKey(kind), model, compatibleUrl.takeIf { kind == ProviderKind.COMPATIBLE })
     }
 
+    // ───────────── voice: Gnani text-to-speech (read-aloud and the podcast). Phone only, like the AI keys. ─────────────
+    /** Which voice reads: "phone" (Android's own, free, offline) or "gnani". */
+    var speechEngine: String
+        get() = sp.getString("speech_engine", "phone") ?: "phone"
+        set(v) = sp.edit().putString("speech_engine", v).apply()
+    var gnaniKey: String
+        get() = sp.getString("gnani_key", "") ?: ""
+        set(v) = sp.edit().putString("gnani_key", v.trim()).apply()
+    var gnaniModel: String
+        get() = sp.getString("gnani_model", "timbre-v2.5") ?: "timbre-v2.5"
+        set(v) = sp.edit().putString("gnani_model", v).apply()
+    var gnaniVoice: String
+        get() = sp.getString("gnani_voice", "Kaveri") ?: "Kaveri"
+        set(v) = sp.edit().putString("gnani_voice", v).apply()
+    var gnaniLanguage: String
+        get() = sp.getString("gnani_language", "en-IN") ?: "en-IN"
+        set(v) = sp.edit().putString("gnani_language", v).apply()
+
+    /** The Gnani settings when it is the chosen voice and has a key; null means "use the phone's voice". */
+    fun gnani(): app.ewe.ai.GnaniCfg? =
+        if (speechEngine == "gnani" && gnaniKey.isNotBlank()) app.ewe.ai.GnaniCfg(gnaniKey, gnaniModel, gnaniVoice, gnaniLanguage) else null
+
     /** "Mark as listened" pressed while offline: "scheduleId|yyyy-MM-dd", sent on the next sync. */
     var pendingListened: Set<String>
         get() = sp.getStringSet("pending_listened", emptySet()) ?: emptySet()

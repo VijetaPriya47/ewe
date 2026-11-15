@@ -44,6 +44,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.ewe.ai.ModelUse
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import app.ewe.ai.GnaniTts
+import app.ewe.ai.GnaniCfg
 import app.ewe.data.ProviderKind
 import app.ewe.data.Repository
 import app.ewe.data.SyncState
@@ -167,6 +171,65 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
                 SettingRow("Search mode", null) {
                     Text(if (hybrid) "Hybrid" else "Keyword", style = ts(13, 600, if (hybrid) C.Green else C.G700),
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (hybrid) C.GreenBg else C.G100).padding(horizontal = 10.dp, vertical = 4.dp))
+                }
+            }
+
+            // ───────────── Voice ─────────────
+            Group("Voice") {
+                var engine by remember { mutableStateOf(prefs.speechEngine) }
+                var gnaniTick by remember { mutableIntStateOf(0) }
+                var dialog by remember { mutableStateOf<String?>(null) }
+                var test by remember { mutableStateOf<String?>(null) }
+                var testError by remember { mutableStateOf<String?>(null) }
+                val scope = rememberCoroutineScope()
+                gnaniTick.let { _ ->
+                    SettingRow("Reading voice", if (engine == "gnani") "For read-aloud and the daily podcast" else "Android's own voice: free, works offline") {
+                        Segmented(listOf("phone" to "Phone", "gnani" to "Gnani"), engine) { engine = it; prefs.speechEngine = it }
+                    }
+                    if (engine == "gnani") {
+                        Divider()
+                        SettingRow("Gnani API key", if (prefs.gnaniKey.isBlank()) "No key yet" else "${maskedKey(prefs.gnaniKey)} · connected") {
+                            SmallButton(if (prefs.gnaniKey.isBlank()) "Add" else "Edit") { dialog = "key" }
+                        }
+                        Divider()
+                        val v = GnaniTts.voices(prefs.gnaniModel).firstOrNull { it.name == prefs.gnaniVoice }
+                        SettingRow("Voice", "${if (prefs.gnaniModel == "timbre-v3.0") "Timbre v3.0" else "Timbre v2.5"}" + (v?.let { " · ${it.gender}" } ?: "")) {
+                            SmallButton(prefs.gnaniVoice, caret = true) { dialog = "voice" }
+                        }
+                        if (prefs.gnaniModel == "timbre-v3.0") {
+                            Divider()
+                            SettingRow("Language", "Timbre v3.0 voices speak them all") {
+                                SmallButton(GnaniTts.languageName(prefs.gnaniLanguage), caret = true) { dialog = "language" }
+                            }
+                        }
+                        Divider()
+                        SettingRow("Try this voice", testError ?: test) {
+                            SmallButton(if (test == "Playing…" || test == "Loading…") "…" else "Play sample", enabled = prefs.gnaniKey.isNotBlank() && test != "Loading…" && test != "Playing…") {
+                                test = "Loading…"; testError = null
+                                scope.launch {
+                                    try {
+                                        val cfg = GnaniCfg(prefs.gnaniKey, prefs.gnaniModel, prefs.gnaniVoice, prefs.gnaniLanguage)
+                                        val bytes = GnaniTts().synthesize(cfg, GnaniTts.SAMPLE)
+                                        val file = java.io.File(context.cacheDir, "gnani_sample.mp3").also { it.writeBytes(bytes) }
+                                        test = "Playing…"
+                                        playSample(file)
+                                        test = null
+                                    } catch (e: Exception) { test = null; testError = e.message ?: "Could not play the sample." }
+                                }
+                            }
+                        }
+                        if (prefs.gnaniKey.isBlank()) Text("Until a key is added, the phone's voice is used.", style = ts(12, 400, C.Amber), modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        else Text("Gnani is a paid service. The text being read is sent to Gnani; the key stays on this phone.", style = ts(12, 400, C.G600, 1.4f), modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                }
+                when (dialog) {
+                    "key" -> GnaniKeyDialog(prefs.gnaniKey, onDismiss = { dialog = null }) { k -> prefs.gnaniKey = k; dialog = null; gnaniTick++ }
+                    "voice" -> GnaniVoiceDialog(prefs.gnaniModel, prefs.gnaniVoice, onDismiss = { dialog = null }) { model, voice ->
+                        prefs.gnaniModel = model; prefs.gnaniVoice = voice.name
+                        prefs.gnaniLanguage = GnaniTts.languageFor(model, voice.name, if (prefs.gnaniLanguage == "auto" || model != "timbre-v3.0") "en-IN" else prefs.gnaniLanguage)
+                        dialog = null; gnaniTick++
+                    }
+                    "language" -> GnaniLanguageDialog(prefs.gnaniLanguage, onDismiss = { dialog = null }) { l -> prefs.gnaniLanguage = l; dialog = null; gnaniTick++ }
                 }
             }
 
@@ -373,4 +436,24 @@ private fun TimeDialog(current: String, onDismiss: () -> Unit, onPick: (String) 
         confirmButton = { TextButton(onClick = { onPick(String.format(Locale.ENGLISH, "%02d:%02d:00", state.hour, state.minute)) }) { Text("Set", style = ts(15, 600)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", style = ts(15, 500, C.G600)) } },
     )
+}
+
+
+/** Plays one audio file to the end on the main thread. */
+private suspend fun playSample(file: java.io.File) = kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+    val mp = android.media.MediaPlayer()
+    fun done(error: Throwable? = null) {
+        runCatching { mp.release() }
+        if (cont.isActive) if (error == null) cont.resumeWith(Result.success(Unit)) else cont.resumeWith(Result.failure(error))
+    }
+    try {
+        mp.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        mp.setDataSource(file.path)
+        mp.setOnPreparedListener { it.start() }
+        mp.setOnCompletionListener { done() }
+        mp.setOnErrorListener { _, what, extra -> done(IllegalStateException("The sample could not be played ($what/$extra).")); true }
+        mp.prepareAsync()
+    } catch (e: Exception) { done(e) }
+    cont.invokeOnCancellation { runCatching { mp.release() } }
 }

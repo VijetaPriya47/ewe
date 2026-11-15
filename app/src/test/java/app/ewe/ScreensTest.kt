@@ -501,6 +501,30 @@ class ScreensTest {
         org.junit.Assert.assertTrue(sent)
     }
 
+    @Test fun voiceSettings() {
+        val r = repo(snapshot(configured))
+        r.prefs.speechEngine = "gnani"; r.prefs.gnaniKey = "gn-key-abcdef-1234"
+        show("7_settings_voice") { SettingsScreen(r, {}) }
+        compose.onNodeWithText("Gnani API key").performScrollTo()
+        compose.onNodeWithText("…1234 · connected").assertExists()
+        compose.onNodeWithText("Kaveri").assertExists()
+        compose.onNodeWithText("Gnani is a paid service", substring = true).assertExists()
+        shot("7_settings_voice_gnani")
+        // the voice list: switch to timbre-v3.0 and filter by gender
+        compose.onNodeWithText("Kaveri").performScrollTo().performClick()
+        compose.onNodeWithText("Showing 42.", substring = true).assertExists()
+        compose.onNodeWithText("Male").performClick()
+        compose.onNodeWithText("Showing 15.", substring = true).assertExists()       // the 15 male v2.5 voices
+        compose.onNodeWithText("Timbre v3.0").performClick()
+        compose.onNodeWithText("Showing 6.", substring = true).assertExists()
+        shot("7_settings_voice_list")
+        compose.onNodeWithText("Avinash").performClick()
+        org.junit.Assert.assertEquals("timbre-v3.0", r.prefs.gnaniModel); org.junit.Assert.assertEquals("Avinash", r.prefs.gnaniVoice)
+        org.junit.Assert.assertEquals("en-IN", r.prefs.gnaniLanguage)
+        org.junit.Assert.assertNotNull(r.prefs.gnani())
+        r.prefs.speechEngine = "phone"; org.junit.Assert.assertNull(r.prefs.gnani())
+    }
+
     @Test fun options() {
         val r = repo(snapshot(configured))
         show("6_session_options") { SessionScreen(r, "cdn", false, {}, {}, {}) }
