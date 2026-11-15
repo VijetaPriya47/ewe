@@ -25,7 +25,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,11 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,7 +66,8 @@ fun FigureView(path: String, caption: String?, load: suspend (String) -> File, o
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).border(1.dp, C.G200, shape).background(C.White)) {
         val f = file
         when {
-            f != null -> AsyncImage(f, caption ?: "Figure", contentScale = ContentScale.FillWidth,
+            // the whole figure, however tall: Fit, not FillWidth (which cut tall ones off)
+            f != null -> AsyncImage(f, caption ?: "Figure", contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clickable(role = Role.Image) { open = true })
             failed -> Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Could not load this figure.", style = ts(13, 400, C.G600))
@@ -86,31 +86,86 @@ fun FigureView(path: String, caption: String?, load: suspend (String) -> File, o
     if (open) file?.let { FigureViewer(it, caption) { open = false } }
 }
 
-/** Full screen, pinch to zoom, drag to move, double-tap to reset. */
+/**
+ * Full screen. Double-tap zooms in where you tap (and back out), pinch zooms around your fingers, and
+ * once zoomed a drag scrolls in any direction, stopping at the figure's edges.
+ */
 @Composable
 fun FigureViewer(file: File, caption: String?, onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        var scale by remember { mutableFloatStateOf(1f) }
-        var offset by remember { mutableStateOf(Offset.Zero) }
+        // the picture's own size, to know how big it is on screen when fitted
+        val image = remember(file) {
+            android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                .also { android.graphics.BitmapFactory.decodeFile(file.path, it) }.let { it.outWidth.toFloat() to it.outHeight.toFloat() }
+        }
+        var box by remember { mutableStateOf(0f to 0f) }
+        var view by remember { mutableStateOf(Zoom.View()) }
+        val fitted = Zoom.fit(image.first, image.second, box.first, box.second)
         Box(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding()) {
             AsyncImage(file, caption ?: "Figure", contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(1f, 6f)
-                            offset = if (scale == 1f) Offset.Zero else offset + pan
+                    .onSizeChanged { box = it.width.toFloat() to it.height.toFloat() }
+                    .pointerInput(fitted) {
+                        detectTapGestures(onDoubleTap = { p ->
+                            view = Zoom.doubleTap(view, p.x - box.first / 2, p.y - box.second / 2, fitted, box)
+                        })
+                    }
+                    .pointerInput(fitted) {
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            view = Zoom.transform(view, centroid.x - box.first / 2, centroid.y - box.second / 2, pan.x, pan.y, zoom, fitted, box)
                         }
                     }
-                    .pointerInput(Unit) { detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero }) }
-                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y))
+                    .graphicsLayer(scaleX = view.scale, scaleY = view.scale, translationX = view.x, translationY = view.y)
+                    .semantics { contentDescription = "Figure, zoomed ${"%.1f".format(view.scale)}×" })
             Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(44.dp).clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.15f))
                 .clickable(role = Role.Button, onClick = onClose).semantics { contentDescription = "Close" }, contentAlignment = Alignment.Center) {
                 Icon(Ic.Close, null, tint = Color.White, modifier = Modifier.size(18.dp))
             }
-            if (!caption.isNullOrBlank()) Text(caption, style = ts(14, 400, Color.White, 1.4f),
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.6f)).padding(16.dp))
+            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.6f)).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!caption.isNullOrBlank()) Text(caption, style = ts(14, 400, Color.White, 1.4f))
+                Text(if (view.scale > 1.01f) "Drag to move around · double-tap to zoom out" else "Double-tap or pinch to zoom in",
+                    style = ts(12, 400, Color.White.copy(alpha = 0.7f)))
+            }
         }
     }
+}
+
+/**
+ * Zoom and scroll for the figure viewer, as plain numbers so it can be tested. Positions are relative
+ * to the centre of the screen; the picture is drawn fitted ([fitted] = its size at zoom 1) and then
+ * scaled by [View.scale] around the centre and moved by [View.x], [View.y].
+ */
+object Zoom {
+    const val MAX = 8f
+    const val DOUBLE_TAP = 2.5f
+
+    data class View(val scale: Float = 1f, val x: Float = 0f, val y: Float = 0f)
+
+    /** Size of a [w]×[h] picture fitted inside a [bw]×[bh] box. */
+    fun fit(w: Float, h: Float, bw: Float, bh: Float): Pair<Float, Float> {
+        if (w <= 0f || h <= 0f || bw <= 0f || bh <= 0f) return bw to bh
+        val s = minOf(bw / w, bh / h)
+        return w * s to h * s
+    }
+
+    /** Keeps the picture covering the screen where it can: no scrolling past its edges. */
+    fun clamp(v: View, fitted: Pair<Float, Float>, box: Pair<Float, Float>): View {
+        val mx = maxOf(0f, (fitted.first * v.scale - box.first) / 2)
+        val my = maxOf(0f, (fitted.second * v.scale - box.second) / 2)
+        return v.copy(x = v.x.coerceIn(-mx, mx), y = v.y.coerceIn(-my, my))
+    }
+
+    /** Pinch around ([cx], [cy]) by [zoom] and drag by ([dx], [dy]); the point under the fingers stays under them. */
+    fun transform(v: View, cx: Float, cy: Float, dx: Float, dy: Float, zoom: Float, fitted: Pair<Float, Float>, box: Pair<Float, Float>): View {
+        val s = (v.scale * zoom).coerceIn(1f, MAX)
+        val k = s / v.scale
+        return clamp(View(s, cx - (cx - v.x) * k + dx, cy - (cy - v.y) * k + dy), fitted, box)
+    }
+
+    /** Zoomed out: zoom in on the tapped point. Zoomed in: back to the whole picture. */
+    fun doubleTap(v: View, cx: Float, cy: Float, fitted: Pair<Float, Float>, box: Pair<Float, Float>): View =
+        if (v.scale > 1.01f) View() else clamp(View(DOUBLE_TAP, cx - (cx - v.x) * DOUBLE_TAP, cy - (cy - v.y) * DOUBLE_TAP), fitted, box)
 }
 
 /** Edit a diagram's caption and its Mermaid code together. */

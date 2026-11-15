@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
@@ -385,6 +386,12 @@ class ScreensTest {
         val r = repo(snapshot(configured))
         show("4_figure_open") { app.ewe.ui.FigureViewer(r.figureFile(FIGURE_PATH), "Map of PoPs from the slide") {} }
         compose.onNodeWithContentDescription("Close").assertExists()
+        compose.onNodeWithText("Double-tap or pinch to zoom in").assertExists()
+        // double-tap zooms in; then the hint says how to move around
+        compose.onNodeWithContentDescription("Figure, zoomed 1.0×").performTouchInput { doubleClick(center) }
+        compose.onNodeWithContentDescription("Figure, zoomed 2.5×").assertExists()
+        compose.onNodeWithText("Drag to move around · double-tap to zoom out").assertExists()
+        shot("4_figure_zoomed")
     }
 
     @Test fun cropSaveAsFigure() {

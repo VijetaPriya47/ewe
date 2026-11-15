@@ -452,4 +452,27 @@ class LogicTest {
         server.shutdown(); file.delete()
         Unit
     }
+
+    @Test fun figureZoomAndScroll() {
+        val z = app.ewe.ui.Zoom
+        val box = 1000f to 2000f
+        val fitted = z.fit(2000f, 1000f, box.first, box.second)          // a wide figure on a tall screen
+        assertEquals(1000f to 500f, fitted)
+        // at normal size there is nothing to scroll
+        assertEquals(app.ewe.ui.Zoom.View(), z.transform(app.ewe.ui.Zoom.View(), 0f, 0f, 300f, 300f, 1f, fitted, box))
+        // double-tap on the right edge: zoomed in, that point stays under the finger, can't scroll past the edge
+        val v = z.doubleTap(app.ewe.ui.Zoom.View(), 400f, 0f, fitted, box)
+        assertEquals(2.5f, v.scale)
+        assertEquals(-600f, v.x, 0.01f)                                   // 400 - 400 × 2.5
+        // it is 2500 wide on a 1000 screen: up to 750 either way; 625 tall on 2000: no vertical scroll
+        assertEquals(750f, z.transform(v, 0f, 0f, 5000f, 400f, 1f, fitted, box).x, 0.01f)
+        assertEquals(0f, z.transform(v, 0f, 0f, 0f, 400f, 1f, fitted, box).y, 0.01f)
+        // pinch: the point between the fingers stays put; never below 1× or above 8×
+        val p = z.transform(app.ewe.ui.Zoom.View(2f, 100f, 0f), 50f, 0f, 0f, 0f, 1.5f, fitted, box)
+        assertEquals(3f, p.scale); assertEquals(50f - (50f - 100f) * 1.5f, p.x, 0.01f)
+        assertEquals(1f, z.transform(v, 0f, 0f, 0f, 0f, 0.01f, fitted, box).scale)
+        assertEquals(8f, z.transform(v, 0f, 0f, 0f, 0f, 100f, fitted, box).scale)
+        // double-tap again: whole figure
+        assertEquals(app.ewe.ui.Zoom.View(), z.doubleTap(v, 0f, 0f, fitted, box))
+    }
 }

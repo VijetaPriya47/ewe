@@ -3,6 +3,19 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.13.0 — 2026-11-15
+
+### Changed
+- **Figures zoom and scroll properly.** Tap a figure in Notes to open it full screen, then:
+  - double-tap to zoom in (2.5×) on the spot you tapped, and double-tap again to see the whole figure;
+  - pinch to zoom (up to 8×) around your fingers;
+  - once zoomed, drag to scroll in any direction; it stops at the figure's edges, so it can't be
+    lost off-screen.
+  A hint at the bottom says what you can do.
+
+### Fixed
+- Tall figures were cut off in Notes; they now show whole.
+
 ## 0.12.0 — 2026-11-15
 
 ### Added
