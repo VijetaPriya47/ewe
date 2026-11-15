@@ -363,4 +363,93 @@ class LogicTest {
         assertEquals(app.ewe.data.CropRect(0f, 0f, 1f, 1f), edge)
         assertEquals(emptyList<Any>(), f.parse(AppJson.parseToJsonElement("{}").jsonObject, 3))
     }
+
+    // ───────────── audio ─────────────
+    @Test fun audioMath() {
+        val m = app.ewe.data.AudioMath
+        assertEquals(listOf<Short>(150, -100), m.downmix(shortArrayOf(100, 200, -100, -100), 2).toList())
+        assertEquals(32767.toShort(), m.floatToShort(2f)); assertEquals((-32767).toShort(), m.floatToShort(-1f))
+        // 48 kHz → 16 kHz in uneven buffers: a third as many samples, and a 440 Hz tone stays 440 Hz
+        val r = app.ewe.data.AudioMath.Resampler(48_000, 16_000)
+        val tone = ShortArray(48_000) { (8000 * kotlin.math.sin(2 * Math.PI * 440 * it / 48_000.0)).toInt().toShort() }
+        val out = listOf(0..9_999, 10_000..10_000, 10_001..33_332, 33_333..47_999).flatMap { r.process(tone.sliceArray(it)).toList() }
+        assertTrue("got ${out.size}", out.size in 15_998..16_002)
+        val crossings = out.zipWithNext().count { (a, b) -> a < 0 && b >= 0 }
+        assertTrue("crossings $crossings", crossings in 438..442)
+        assertEquals(16_000, app.ewe.data.AudioMath.Resampler(16_000, 16_000).process(ShortArray(16_000)).size)
+        // pieces → notes parts of about 20 minutes, empty ones left out
+        val parts = m.notesParts(listOf(Triple(0, 600, "a"), Triple(600, 1200, "b"), Triple(1200, 1800, " "), Triple(1800, 1830, "c")), 1200)
+        assertEquals(listOf(Triple(0, 1200, "a\n\nb"), Triple(1200, 1830, "c")), parts)
+        assertEquals("1:05:09", app.ewe.data.Audio.clock(3909)); assertEquals("4:07", app.ewe.data.Audio.clock(247))
+        assertEquals("52 min", app.ewe.data.Audio.length(3120)); assertEquals("1 h 05 min", app.ewe.data.Audio.length(3900))
+    }
+
+    private fun tool(name: String) = listOf("/usr/bin/$name", "/usr/local/bin/$name").firstOrNull { java.io.File(it).canExecute() }
+
+    @Test fun audioFilesAreReadable() {
+        val ffprobe = tool("ffprobe"); val ffmpeg = tool("ffmpeg")
+        org.junit.Assume.assumeTrue("ffmpeg not installed", ffprobe != null && ffmpeg != null)
+        val dir = kotlin.io.path.createTempDirectory("audio").toFile()
+        // our WAV: ffprobe sees 16 kHz mono 16-bit, 2 seconds
+        val wav = java.io.File(dir, "a.wav")
+        val pcm = ShortArray(32_000) { (3000 * kotlin.math.sin(it / 10.0)).toInt().toShort() }
+        val bytes = java.nio.ByteBuffer.allocate(pcm.size * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply { asShortBuffer().put(pcm) }.array()
+        wav.writeBytes(app.ewe.data.AudioMath.wavHeader(bytes.size, 16_000, 1) + bytes)
+        fun probe(f: java.io.File) = ProcessBuilder(ffprobe, "-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels:format=duration",
+            "-of", "default=nw=1", f.path).redirectErrorStream(true).start().inputStream.bufferedReader().readText()
+        val w = probe(wav)
+        assertTrue(w, w.contains("codec_name=pcm_s16le") && w.contains("sample_rate=16000") && w.contains("channels=1") && w.contains("duration=2.0"))
+        // our ADTS headers match the ones ffmpeg writes for 16 kHz mono AAC-LC, frame for frame
+        val aac = java.io.File(dir, "ref.aac")
+        ProcessBuilder(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=2:sample_rate=16000", "-ac", "1",
+            "-c:a", "aac", "-b:a", "32k", "-f", "adts", aac.path).start().waitFor()
+        val ref = aac.readBytes()
+        var at = 0; var frames = 0
+        while (at + 7 <= ref.size) {
+            val len = ((ref[at + 3].toInt() and 3) shl 11) or ((ref[at + 4].toInt() and 0xFF) shl 3) or ((ref[at + 5].toInt() and 0xFF) ushr 5)
+            assertEquals("frame $frames", ref.copyOfRange(at, at + 7).toList(), app.ewe.data.AudioMath.adtsHeader(len - 7, 16_000, 1).toList())
+            at += len; frames++
+        }
+        assertTrue(frames > 20 && at == ref.size)
+        dir.deleteRecursively()
+    }
+
+    @Test fun `transcription speaks each wire format`(): Unit = runBlocking {
+        val seen = ArrayList<RecordedRequest>()
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                seen += request
+                fun json(s: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(s)
+                return when (request.path) {
+                    "/oai/audio/transcriptions" -> json("""{"text":" so um, CDN means servers near users "}""")
+                    "/oai/models" -> json("""{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini-transcribe"},{"id":"whisper-1"}]}""")
+                    "/gem/models/gemini-flash:generateContent" -> json("""{"candidates":[{"content":{"parts":[{"text":"hello "},{"text":"there"}]}}]}""")
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+        server.start()
+        val base = server.url("/").toString().trimEnd('/')
+        val p = Providers(baseUrls = mapOf(ProviderKind.OPENAI to "$base/oai", ProviderKind.GEMINI to "$base/gem"))
+        val file = kotlin.io.path.createTempFile("piece", ".m4a").toFile().apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+
+        assertEquals(listOf("gpt-4o-mini-transcribe", "whisper-1"), p.listModels(ProviderKind.OPENAI, "sk", null, ModelUse.TRANSCRIBE))
+        assertEquals("so um, CDN means servers near users", p.transcribe(ProviderCfg(ProviderKind.OPENAI, "sk", "whisper-1", null), file, "audio/mp4", "CDN basics"))
+        val form = seen.last().body.readUtf8()
+        assertTrue(form.contains("name=\"model\"") && form.contains("whisper-1") && form.contains("name=\"prompt\"") && form.contains("CDN basics"))
+        assertTrue(form.contains("filename=\"${file.name}\"") && form.contains("Content-Type: audio/mp4"))
+        assertEquals("Bearer sk", seen.last().getHeader("Authorization"))
+
+        assertEquals("hello there", p.transcribe(ProviderCfg(ProviderKind.GEMINI, "AIza", "gemini-flash", null), file, "audio/aac", ""))
+        val gem = AppJson.parseToJsonElement(seen.last().body.readUtf8()).jsonObject
+        val inline = gem["contents"]!!.jsonArray[0].jsonObject["parts"]!!.jsonArray[1].jsonObject["inlineData"]!!.jsonObject
+        assertEquals("audio/aac", inline["mimeType"]!!.jsonPrimitive.content)
+        assertEquals("AQIDBA==", inline["data"]!!.jsonPrimitive.content)
+
+        val claude = runCatching { p.transcribe(ProviderCfg(ProviderKind.ANTHROPIC, "sk-ant", "claude", null), file, "audio/mp4", "") }
+        assertTrue(claude.exceptionOrNull()?.message.orEmpty().contains("Claude can't transcribe"))
+        server.shutdown(); file.delete()
+        Unit
+    }
 }

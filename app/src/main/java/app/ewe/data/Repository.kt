@@ -40,7 +40,17 @@ sealed interface SyncState {
 }
 
 /** One chat message to send: text and up to 10 images. */
-data class Batch(val text: String, val images: List<Uri>, val mode: String = "notes", val figures: List<Uri> = emptyList())
+data class Batch(val text: String, val images: List<Uri>, val mode: String = "notes", val figures: List<Uri> = emptyList(),
+                 /** "audio" when the text is a transcript. */
+                 val source: String? = null)
+
+/** An audio file on its way to notes: which pieces are transcribed so far. */
+data class AudioJob(
+    val uri: Uri, val name: String, val seconds: Int?, val note: String, val dir: File,
+    val format: Audio.Format, val pieces: List<Audio.Piece> = emptyList(),
+    /** (start, end, text) of each piece done. */
+    val done: List<Triple<Int, Int, String>> = emptyList(),
+)
 
 /**
  * An upload that is being turned into notes, or one that failed and can be retried.
@@ -52,6 +62,8 @@ data class Upload(
     val error: String? = null,
     val total: Int = batches.size,
     val pdfDir: File? = null,
+    /** Set while an audio file is being prepared and transcribed (before its notes parts exist). */
+    val audio: AudioJob? = null,
 ) {
     val text: String get() = batches.firstOrNull()?.text.orEmpty()
     val images: List<Uri> get() = batches.flatMap { it.images }
@@ -405,7 +417,89 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
     /** Sends whatever is left of a failed upload (for a PDF: the remaining pages). */
     fun retry(sessionId: String) {
         val u = _uploads.value[sessionId]?.takeIf { it.error != null } ?: return
+        if (u.audio != null) { transcribe(sessionId, u.audio); return }
         run(sessionId, u.copy(error = null, stage = "Reading…"))
+    }
+
+    // ───────────── audio → transcript → notes ─────────────
+    fun transcribeCfg(): ProviderCfg? = prefs.cfg(settings.transcribeProvider, settings.transcribeModel)
+
+    /** An audio file: shrunk and split on the phone, transcribed piece by piece, then notes in 20-minute parts. */
+    fun sendAudio(sessionId: String, uri: Uri, name: String, seconds: Int?, note: String) {
+        if (busy(sessionId)) return
+        val dir = File(context.cacheDir, "audio/${System.currentTimeMillis()}")
+        val cfg = transcribeCfg()
+        val format = if (cfg?.kind == ProviderKind.GEMINI) Audio.Format.ADTS else Audio.Format.M4A
+        transcribe(sessionId, AudioJob(uri, name, seconds, note, dir, format))
+    }
+
+    private fun audioLabel(job: AudioJob) = "Audio: ${job.name}" + (job.seconds?.let { " (${Audio.length(it)})" } ?: "")
+
+    private fun transcribe(sessionId: String, start: AudioJob) {
+        var job = start
+        val placeholder = Batch(audioLabel(job) + if (job.note.isNotBlank()) "\n\n${job.note.trim()}" else "", emptyList())
+        fun show(stage: String, error: String? = null) =
+            _uploads.update { it + (sessionId to Upload(listOf(placeholder), stage, error, pdfDir = job.dir, audio = job)) }
+        show("Preparing the audio…")
+        scope.launch {
+            try {
+                val cfg = transcribeCfg() ?: throw ApiException("Pick a transcription model in Settings › Notes first.")
+                if (cfg.kind == ProviderKind.ANTHROPIC) throw ApiException("Claude can't transcribe audio. Pick another transcription model in Settings › Notes.")
+                if ((job.seconds ?: 0) > Audio.MAX_SECONDS) throw ApiException("Audio up to ${Audio.MAX_SECONDS / 3600} hours at a time.")
+                val providers = app.ewe.ai.Providers()
+                val hint = snapshot.value.session(sessionId)?.title.orEmpty()
+                while (true) {
+                    // (re)make the pieces still to be transcribed
+                    val from = job.done.lastOrNull()?.second ?: 0
+                    if (job.pieces.none { it.startSec >= from && it.file.exists() }) {
+                        val pieces = withContext(Dispatchers.IO) {
+                            try {
+                                Audio.prepare(context, job.uri, job.dir, job.format, from) { p -> show("Preparing the audio… ${(p * 100).toInt()}%") }
+                            } catch (e: ApiException) { throw e } catch (e: Exception) {
+                                if (job.format == Audio.Format.WAV) throw ApiException("This audio could not be read: ${e.message ?: "unknown error"}")
+                                // this phone could not make AAC: plain WAV instead (bigger, but always works)
+                                job = job.copy(format = Audio.Format.WAV)
+                                Audio.prepare(context, job.uri, job.dir, Audio.Format.WAV, from) { p -> show("Preparing the audio… ${(p * 100).toInt()}%") }
+                            }
+                        }
+                        if (pieces.isEmpty() && job.done.isEmpty()) throw ApiException("This file has no audio to transcribe.")
+                        job = job.copy(pieces = pieces)
+                    }
+                    val todo = job.pieces.filter { it.startSec >= from }
+                    if (todo.isEmpty()) break
+                    val total = job.pieces.size + job.done.count { d -> job.pieces.none { it.startSec == d.first } }
+                    for (piece in todo) {
+                        show("Transcribing ${job.done.size + 1} of $total…")
+                        val text = try {
+                            providers.transcribe(cfg, piece.file, piece.format.mime, hint)
+                        } catch (e: ApiException) {
+                            // a provider that refuses the compressed file gets plain WAV for the rest
+                            if (job.format != Audio.Format.WAV && e.status in setOf(400, 415, 422)) {
+                                job.pieces.forEach { it.file.delete() }
+                                job = job.copy(format = Audio.Format.WAV, pieces = emptyList())
+                                break
+                            }
+                            throw e
+                        }
+                        piece.file.delete()
+                        job = job.copy(done = job.done + Triple(piece.startSec, piece.endSec, text))
+                    }
+                    if (job.pieces.isEmpty()) continue
+                    if (job.pieces.last().endSec <= (job.done.lastOrNull()?.second ?: 0)) break
+                }
+                val parts = AudioMath.notesParts(job.done, Audio.NOTES_PART_SECONDS)
+                if (parts.isEmpty()) throw ApiException("No speech was found in this audio.")
+                val batches = parts.mapIndexed { i, (s, e, text) ->
+                    val head = "${audioLabel(job)} · ${Audio.clock(s)}–${Audio.clock(e)}"
+                    val note = if (i == 0 && job.note.isNotBlank()) "\n\n${job.note.trim()}" else ""
+                    Batch("$head$note\n\n$text", emptyList(), "notes", source = "audio")
+                }
+                run(sessionId, Upload(batches, "Reading…", pdfDir = job.dir))
+            } catch (e: Exception) {
+                val got = if (job.done.isNotEmpty()) "\n${job.done.size} piece(s) were transcribed; Try again carries on from there." else ""
+                show("", (e.message ?: "Something went wrong.") + got)
+            }
+        }
     }
 
     /**
@@ -618,6 +712,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
             put("session_id", sessionId)
             put("text", batch.text)
             put("mode", batch.mode)
+            batch.source?.let { put("source", it) }
             put("local_date", today().toString())
             put("images", buildJsonArray { encoded.forEach { add(buildJsonObject { put("mime", "image/jpeg"); put("data", it) }) } })
             if (figureParts.isNotEmpty()) put("figures", buildJsonArray { figureParts.forEach { add(it) } })
@@ -771,7 +866,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         const val FIGURE_MAX_SIDE = 1600
         private const val SETTINGS_COLUMNS = "notes_provider,notes_model,placement_provider,placement_model,podcast_provider,podcast_model," +
             "rag_enabled,rag_selected_model,rag_active_model,podcast_enabled,interval_cap_days,daily_job_time," +
-            "podcast_target_minutes,revisions_per_level,keep_photo_copies,figures_provider,figures_model"
+            "podcast_target_minutes,revisions_per_level,keep_photo_copies,figures_provider,figures_model,transcribe_provider,transcribe_model"
 
         /** "provider:model" → (provider, model) */
         fun splitModel(key: String?): Pair<String, String>? {

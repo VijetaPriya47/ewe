@@ -370,3 +370,9 @@ Deno.test("place reviewed figures into existing notes", async () => {
     [null, "Figures", [["u/s/3.jpg", null, "chart"]]],                              // the one not placed still goes in
   ]);
 });
+
+Deno.test("audio transcripts get the speech rules", () => {
+  const base = { sessionType: "project" as const, sessionTitle: "T", previousNotes: "", refs: { sectionByRef: new Map(), bulletByRef: new Map() }, newText: "um so", images: [] };
+  assert(buildNotesRequest({ ...base, source: "audio" }).system.includes("TRANSCRIPT OF SPEECH"));
+  assert(!buildNotesRequest(base).system.includes("TRANSCRIPT OF SPEECH"));
+});

@@ -53,7 +53,7 @@ fun modelLabel(provider: String?, model: String?): String =
 @Composable
 fun ModelPicker(title: String, prefs: LocalPrefs, use: ModelUse, currentProvider: String?, currentModel: String?,
                 onDismiss: () -> Unit, onPick: (provider: String, model: String) -> Unit) {
-    val kinds = remember { ProviderKind.entries.filter { prefs.connected(it) && !(use == ModelUse.EMBEDDING && it == ProviderKind.ANTHROPIC) } }
+    val kinds = remember { ProviderKind.entries.filter { prefs.connected(it) && !(use != ModelUse.CHAT && it == ProviderKind.ANTHROPIC) } }
     var kind by remember { mutableStateOf(kinds.firstOrNull { it.id == currentProvider } ?: kinds.firstOrNull()) }
     var typed by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -75,6 +75,7 @@ fun ModelPicker(title: String, prefs: LocalPrefs, use: ModelUse, currentProvider
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (kinds.isEmpty()) {
                     Text(if (use == ModelUse.EMBEDDING) "Add an OpenAI, Gemini or OpenAI-compatible key first. Claude has no embeddings API."
+                         else if (use == ModelUse.TRANSCRIBE) "Add an OpenAI, Gemini or OpenAI-compatible key (e.g. Groq) first. Claude can't take audio."
                          else "Add a provider key first, under AI providers.", style = ts(15, 400, C.G600, 1.45f))
                     return@Column
                 }

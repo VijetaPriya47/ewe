@@ -3,6 +3,29 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.12.0 — 2026-11-15
+
+### Added
+- **Notes from audio.** Attach › **Audio** takes a recording: a lecture, a talk, a voice note or a
+  video's sound (MP3, M4A, WAV, OGG/Opus, FLAC, MP4…), up to 3 hours.
+  1. On the phone it's shrunk to speech quality (mono, 16 kHz, AAC at 32 kbps, about 14 MB an hour)
+     and split into 10-minute pieces.
+  2. Each piece goes straight from the phone to your **transcription model**: "Transcribing 3 of 6…".
+  3. The transcript becomes notes in parts of about 20 minutes, each seeing the notes before it, with
+     rules for speech: filler, repetition, small talk, housekeeping and ads are dropped, corrections
+     keep only the corrected version, and every real point, number and example is kept.
+  4. The transcript stays in the chat (tap a message to expand it). Anything typed in the box is
+     sent with the audio.
+  If a piece fails, the pieces already transcribed are kept and **Try again** carries on from there.
+  If the phone can't make AAC, or a provider refuses it, plain WAV is used instead (bigger, same result).
+- **Transcription model** (Settings › Notes): OpenAI (gpt-4o-mini-transcribe, gpt-4o-transcribe,
+  whisper-1), Gemini, or an OpenAI-compatible server such as Groq (whisper-large-v3-turbo). Claude
+  can't take audio, but can still be your notes model.
+
+### Database
+- Migration `20261115090000_ewe_11_transcription_model.sql`: `transcribe_provider` /
+  `transcribe_model` in settings.
+
 ## 0.11.0 — 2026-11-14
 
 ### Added

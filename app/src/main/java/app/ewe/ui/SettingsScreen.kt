@@ -53,7 +53,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private enum class Pick { NOTES, FIGURES, EMBEDDING, PLACEMENT, PODCAST }
+private enum class Pick { NOTES, FIGURES, TRANSCRIBE, EMBEDDING, PLACEMENT, PODCAST }
 
 @Composable
 fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
@@ -101,6 +101,10 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
             // ───────────── Notes ─────────────
             Group("Notes · always on") {
                 SettingRow("Notes model", null) { SmallButton(modelLabel(s.notesProvider, s.notesModel), caret = true) { picking = Pick.NOTES } }
+                Divider()
+                SettingRow("Transcription model", if (s.transcribeModel == null) "For audio: OpenAI, Gemini or Groq Whisper" else "For audio") {
+                    SmallButton(if (s.transcribeModel == null) "Choose" else modelLabel(s.transcribeProvider, s.transcribeModel), caret = true) { picking = Pick.TRANSCRIBE }
+                }
                 Divider()
                 var autoFigures by remember { mutableStateOf(prefs.autoFigures) }
                 SettingRow("Find figures in PDFs automatically", "Diagrams in a PDF are cut out for you to check while the notes are made") {
@@ -246,6 +250,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
     picking?.let { which ->
         val (title, use, provider, model) = when (which) {
             Pick.NOTES -> Quad("Notes model", ModelUse.CHAT, s.notesProvider, s.notesModel)
+            Pick.TRANSCRIBE -> Quad("Transcription model", ModelUse.TRANSCRIBE, s.transcribeProvider, s.transcribeModel)
             Pick.FIGURES -> Quad("Figure-finding model", ModelUse.CHAT, s.figuresProvider ?: s.notesProvider, s.figuresModel ?: s.notesModel)
             Pick.PLACEMENT -> Quad("Placement model", ModelUse.CHAT, s.placementProvider, s.placementModel)
             Pick.PODCAST -> Quad("Podcast model", ModelUse.CHAT, s.podcastProvider, s.podcastModel)
@@ -255,6 +260,7 @@ fun SettingsScreen(repo: Repository, onBack: () -> Unit) {
             picking = null
             when (which) {
                 Pick.NOTES -> save { put("notes_provider", p); put("notes_model", m) }
+                Pick.TRANSCRIBE -> save { put("transcribe_provider", p); put("transcribe_model", m) }
                 Pick.FIGURES -> save { put("figures_provider", p); put("figures_model", m) }
                 Pick.PLACEMENT -> save { put("placement_provider", p); put("placement_model", m) }
                 Pick.PODCAST -> save { put("podcast_provider", p); put("podcast_model", m) }

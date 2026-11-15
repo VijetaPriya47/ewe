@@ -151,6 +151,18 @@ const TOPIC_RULES = `
 - Bullets in one group keep their order.
 `.trim();
 
+const AUDIO_RULES = `
+# THE NEW CONTENT IS A TRANSCRIPT OF SPEECH (a lecture, talk, video or voice note)
+- It was transcribed automatically: expect filler, repetition, false starts and mis-heard words.
+- Drop everything that is not content: "um", "you know", "so basically", greetings, jokes and small talk,
+  housekeeping ("can everyone hear me", "we'll take a break"), sponsor messages and ads, repeated
+  explanations, "as I said earlier", and the speaker thinking out loud.
+- When the speaker corrects themselves, keep only the corrected version.
+- Keep every real point, definition, number, example, step and warning, even if said only once in passing.
+- A mis-heard technical term that is clear from context may be written correctly; never guess beyond that.
+- Write notes, not a summary of the talk: no "the speaker says", "in this lecture".
+`.trim();
+
 const PROJECT_RULES = `
 # WHERE NOTES GO (this session is a PROJECT)
 - Notes are continuous: everything is appended after the previous notes.
@@ -169,8 +181,11 @@ export function buildNotesRequest(opts: {
   images: ImageInput[];
   links?: string;
   figures?: { key: string; image: ImageInput }[];
+  /** "audio": the NEW CONTENT is a transcript of speech. */
+  source?: string;
 }): JsonRequest {
-  const system = [COMMON_RULES, opts.sessionType === "topic" ? TOPIC_RULES : PROJECT_RULES].join("\n\n");
+  const system = [COMMON_RULES, ...(opts.source === "audio" ? [AUDIO_RULES] : []),
+    opts.sessionType === "topic" ? TOPIC_RULES : PROJECT_RULES].join("\n\n");
 
   const header =
 `SESSION: "${opts.sessionTitle}" (${opts.sessionType})

@@ -477,6 +477,23 @@ class ScreensTest {
         compose.onNodeWithText("Try again").assertExists()
     }
 
+    @Test fun audioDialogNeedsATranscriptionModel() {
+        show("12_audio_no_model") { app.ewe.ui.AudioDialog(testPhoto(), repo(snapshot(configured)), {}, {}) {} }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Open Settings").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Pick a transcription model", substring = true).assertExists()
+    }
+
+    @Test fun audioDialogReady() {
+        var sent = false
+        val withModel = configured.copy(transcribeProvider = "openai", transcribeModel = "gpt-4o-mini-transcribe")
+        show("12_audio_ready") { app.ewe.ui.AudioDialog(testPhoto(), repo(snapshot(withModel)), {}, {}) { sent = true } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Make notes").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("transcribed by", substring = true).assertExists()
+        shot("12_audio_ready")
+        compose.onNodeWithText("Make notes").performClick()
+        org.junit.Assert.assertTrue(sent)
+    }
+
     @Test fun options() {
         val r = repo(snapshot(configured))
         show("6_session_options") { SessionScreen(r, "cdn", false, {}, {}, {}) }

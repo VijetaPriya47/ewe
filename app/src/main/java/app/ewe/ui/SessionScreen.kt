@@ -204,6 +204,8 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
     var mode by rememberSaveable(session.id) { mutableStateOf("notes") }
     var pdf by remember { mutableStateOf<Uri?>(null) }
     val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) pdf = uri }
+    var audio by remember { mutableStateOf<Uri?>(null) }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) audio = uri }
 
     val rows = remember(snap.messages, session.id) {
         val today = LocalDate.now()
@@ -351,6 +353,11 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
                         attachMenu = false
                         runCatching { pdfPicker.launch(arrayOf("application/pdf")) }.onFailure { toast("No file picker found.") }
                     })
+                    DropdownMenuItem(text = { Text("Audio", style = ts(15)) }, onClick = {
+                        attachMenu = false
+                        // a video's sound works too
+                        runCatching { audioPicker.launch(arrayOf("audio/*", "video/*")) }.onFailure { toast("No file picker found.") }
+                    })
                 }
             }
             IconBtn(Ic.Camera, "Take photo", enabled = !busy) {
@@ -387,6 +394,13 @@ private fun ColumnScope.ChatTab(repo: Repository, snap: Snapshot, session: Sessi
         CropDialog(c.pageImage, onDismiss = { fixingFigure = null }, initial = c.rect, title = "Figure · page ${c.page}") { uri ->
             repo.replaceFigure(session.id, c.id, uri)
             fixingFigure = null
+        }
+    }
+    audio?.let { uri ->
+        AudioDialog(uri, repo, onDismiss = { audio = null }, onSettings = { audio = null; onSettings() }) { info ->
+            audio = null
+            repo.sendAudio(session.id, uri, info.name, info.seconds, ModeWord.strip(draft, mode).trim())
+            draft = ""; mode = "notes"
         }
     }
     pdf?.let { uri ->
@@ -701,6 +715,45 @@ private fun ReaderBar(reader: NotesReader, state: ReaderState) {
 
 
 /** Pick which pages of a PDF become notes. They are sent 10 pages per message. */
+@Composable
+internal fun AudioDialog(uri: Uri, repo: Repository, onDismiss: () -> Unit, onSettings: () -> Unit, onSend: (app.ewe.data.Audio.Info) -> Unit) {
+    val context = LocalContext.current
+    var info by remember { mutableStateOf<app.ewe.data.Audio.Info?>(null) }
+    LaunchedEffect(uri) { info = withContext(Dispatchers.IO) { app.ewe.data.Audio.info(context, uri) } }
+    val cfg = repo.transcribeCfg()
+    val seconds = info?.seconds
+    val tooLong = seconds != null && seconds > app.ewe.data.Audio.MAX_SECONDS
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = C.White,
+        title = { Text(info?.name ?: "Audio", style = ts(18, 600), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (info == null) { Text("Opening…", style = ts(14, 400, C.G600)); return@Column }
+                Text(seconds?.let { "Length: ${app.ewe.data.Audio.length(it)}." } ?: "Length unknown.", style = ts(14, 400, C.G700))
+                when {
+                    tooLong -> Text("Audio up to ${app.ewe.data.Audio.MAX_SECONDS / 3600} hours at a time.", style = ts(14, 400, C.Red, 1.45f))
+                    cfg == null -> Text("Pick a transcription model in Settings › Notes first: OpenAI, Gemini or an OpenAI-compatible one such as Groq Whisper.",
+                        style = ts(14, 400, C.Amber, 1.45f))
+                    else -> {
+                        val parts = seconds?.let { (it + app.ewe.data.Audio.NOTES_PART_SECONDS - 1) / app.ewe.data.Audio.NOTES_PART_SECONDS }
+                        Text("It's shrunk to speech quality on this phone, transcribed by ${modelLabel(cfg.kind.id, cfg.model)}, " +
+                            "then made into notes with the filler left out" +
+                            (if (parts != null && parts > 1) ", in $parts parts of up to 20 minutes." else ".") +
+                            " The transcript stays in the chat.", style = ts(14, 400, C.G600, 1.45f))
+                        Text("Keep the app open until it's done. Audio always goes to Notes; anything typed in the box is sent with it.",
+                            style = ts(12, 400, C.G500, 1.4f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (info != null && cfg == null && !tooLong) TextButton(onClick = onSettings) { Text("Open Settings", style = ts(15, 600)) }
+            else TextButton(onClick = { onSend(info!!) }, enabled = info != null && cfg != null && !tooLong) { Text("Make notes", style = ts(15, 600)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", style = ts(15, 500, C.G600)) } },
+    )
+}
+
 @Composable
 private fun PdfDialog(uri: Uri, onDismiss: () -> Unit, autoFigures: Boolean = false, onSend: (Pdf.Info, Int, Int) -> Unit) {
     val context = LocalContext.current

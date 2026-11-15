@@ -143,6 +143,9 @@ data class Settings(
     /** Finds figures in PDFs; empty = the notes model. */
     @SerialName("figures_provider") val figuresProvider: String? = null,
     @SerialName("figures_model") val figuresModel: String? = null,
+    /** Turns audio into text for notes. */
+    @SerialName("transcribe_provider") val transcribeProvider: String? = null,
+    @SerialName("transcribe_model") val transcribeModel: String? = null,
 )
 
 @Serializable

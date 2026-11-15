@@ -8,6 +8,7 @@
 //     "images"?: [{ "mime": "image/jpeg", "data": "<base64>" }],   // max 10
 //     "figures"?: [{ "key": "F1", "path": "<user>/<session>/<file>.jpg", "mime": "image/jpeg", "data": "<base64>" }],
 //                  // pictures cut out of the pages, already in the "figures" bucket; notes mode only, max 10 (6 picked by hand; up to 10 found in a PDF part)
+//     "source"?: "audio",          // the text is a transcript of speech: filler is dropped
 //     "local_date": "YYYY-MM-DD",                                   // the phone's date
 //     "provider": { "kind": "openai"|"anthropic"|"gemini"|"compatible", "api_key": "...",
 //                   "model": "...", "base_url"?: "..." } }
@@ -142,6 +143,7 @@ serve(async (req, body) => {
     sessionType: type, sessionTitle: session.title, previousNotes, refs, newText: text, images,
     links: linksBlock(known, textUrls),
     figures: figures.map((f) => ({ key: f.key.toUpperCase(), image: { mime: f.mime || "image/jpeg", data: f.data } })),
+    source: body.source === "audio" ? "audio" : undefined,
   })) as { sections?: unknown[]; skipped_duplicates?: number; links?: ModelLink[] };
 
   // 4. Log the chat message, save its links, then save the notes (citing them) atomically

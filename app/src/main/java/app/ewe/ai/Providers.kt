@@ -39,12 +39,17 @@ import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
-enum class ModelUse { CHAT, EMBEDDING }
+enum class ModelUse { CHAT, EMBEDDING, TRANSCRIBE }
+
+private const val TRANSCRIBE_PROMPT = "Transcribe this audio word for word, in the language it is spoken in. " +
+    "Return only the transcript as plain text: no timestamps, no speaker labels, no notes or comments. " +
+    "If there is no speech, return nothing."
 
 /**
  * AI calls made straight from the phone: listing a provider's models and writing the
@@ -76,7 +81,7 @@ class Providers(
         withContext(Dispatchers.IO) {
             when (kind) {
                 ProviderKind.ANTHROPIC -> {
-                    if (use == ModelUse.EMBEDDING) return@withContext emptyList()
+                    if (use != ModelUse.CHAT) return@withContext emptyList()
                     claudeErrors { claude(apiKey).models().list().autoPager().map { it.id() }.toList() }
                 }
                 ProviderKind.GEMINI -> {
@@ -90,13 +95,57 @@ class Providers(
                     val o = get("${base(kind, baseUrl)}/models", "Authorization" to "Bearer $apiKey")
                     val all = o["data"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull }.sorted()
                     val embed = all.filter { it.contains("embed", ignoreCase = true) }
+                    val speech = all.filter { it.contains("transcribe", ignoreCase = true) || it.contains("whisper", ignoreCase = true) }
                     when {
                         use == ModelUse.EMBEDDING -> embed.ifEmpty { all }
+                        use == ModelUse.TRANSCRIBE -> speech.ifEmpty { all }
                         else -> all.filterNot { it in embed }
                     }
                 }
             }
         }
+
+    // ───────────── speech → text, straight from the phone (audio is too big for the edge functions) ─────────────
+    /**
+     * Transcribes one piece of audio. [hint] (e.g. the session title) helps with names and terms.
+     * OpenAI and OpenAI-compatible servers (Groq, …) use /audio/transcriptions; Gemini reads the audio
+     * itself. Claude cannot take audio.
+     */
+    suspend fun transcribe(cfg: ProviderCfg, file: java.io.File, mime: String, hint: String): String = withContext(Dispatchers.IO) {
+        when (cfg.kind) {
+            ProviderKind.ANTHROPIC -> throw ApiException("Claude can't transcribe audio. Pick OpenAI, Gemini or an OpenAI-compatible model (e.g. Groq Whisper) as the transcription model in Settings.")
+            ProviderKind.GEMINI -> {
+                val model = cfg.model.removePrefix("models/")
+                val data = java.util.Base64.getEncoder().encodeToString(file.readBytes())
+                val res = post("${base(cfg.kind, cfg.baseUrl)}/models/$model:generateContent", buildJsonObject {
+                    putJsonArray("contents") {
+                        add(buildJsonObject {
+                            put("role", "user")
+                            putJsonArray("parts") {
+                                add(buildJsonObject { put("text", TRANSCRIBE_PROMPT + if (hint.isNotBlank()) "\nTopic: $hint" else "") })
+                                add(buildJsonObject { putJsonObject("inlineData") { put("mimeType", mime); put("data", data) } })
+                            }
+                        })
+                    }
+                }, "x-goog-api-key" to cfg.apiKey)
+                (res["promptFeedback"] as? JsonObject)?.get("blockReason")?.let { throw ApiException("Gemini blocked this audio ($it).") }
+                val parts = res["candidates"]?.jsonArray?.firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts")?.jsonArray
+                parts.orEmpty().joinToString("") { (it.jsonObject["text"] as? JsonPrimitive)?.contentOrNull.orEmpty() }.trim()
+            }
+            else -> {
+                val body = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
+                    .addFormDataPart("file", file.name, file.asRequestBody(mime.toMediaType()))
+                    .addFormDataPart("model", cfg.model)
+                    .addFormDataPart("response_format", "json")
+                    .apply { if (hint.isNotBlank()) addFormDataPart("prompt", hint.take(400)) }
+                    .build()
+                val req = Request.Builder().url("${base(cfg.kind, cfg.baseUrl)}/audio/transcriptions")
+                    .apply { if (cfg.apiKey.isNotBlank()) header("Authorization", "Bearer ${cfg.apiKey}") }
+                    .post(body).build()
+                (call(req)["text"] as? JsonPrimitive)?.contentOrNull?.trim() ?: throw ApiException("The transcription came back empty.")
+            }
+        }
+    }
 
     // ───────────── one text call that returns JSON matching a schema ─────────────
     suspend fun generateJson(cfg: ProviderCfg, system: String, user: String, schema: JsonObject, schemaName: String): JsonObject =
