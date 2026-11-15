@@ -225,6 +225,12 @@ begin
   perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L] where id = %L', ' padded', v_cdn)), 'no padding');
   perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L] where id = %L', 'a','b','c','d','e','f','g','h','i','j','k', v_cdn)), 'at most 10 labels');
 
+  -- completed
+  update sessions set completed_at = now() where id = v_cdn;
+  perform pg_temp.ok((select completed_at is not null and is_active from sessions where id = v_cdn), 'completed is only a mark');
+  update sessions set completed_at = null where id = v_cdn;
+  perform pg_temp.ok((select completed_at is null from sessions where id = v_cdn), 'can be marked in progress again');
+
   -- recreate as project
   v_new := recreate_session(v_cdn);
   perform pg_temp.ok((select type = 'project' and recreated_from = v_cdn from sessions where id = v_new), 'recreated as project');

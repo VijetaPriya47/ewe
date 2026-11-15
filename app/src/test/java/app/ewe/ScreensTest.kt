@@ -91,7 +91,7 @@ class ScreensTest {
             Session("sud", "Making a Sudoku", "project", true, null, t(3), t(1)),
             Session("http", "HTTP Caching", "topic", true, null, t(9), t(2), listOf("Networking")),
             Session("sd", "System Design · Ch 4", "topic", true, null, t(20), t(8), listOf("exam")),
-            Session("lb", "Load Balancers", "topic", true, null, t(40), t(13)),
+            Session("lb", "Load Balancers", "topic", true, null, t(40), t(13), completedAt = t(12)),
             Session("trip", "Trip Planning", "project", false, null, t(60), t(21)),
         )
         val sections = listOf(
@@ -553,6 +553,25 @@ class ScreensTest {
         compose.onNodeWithText("Add a label").assertExists()
         compose.onNodeWithText("+ Networking", substring = true).assertDoesNotExist()   // already on this session
         shot("6_session_options_labels")
+    }
+
+    @Test fun completedSessions() {
+        val r = repo(snapshot(configured))
+        show("1_home_completed") { HomeScreen(r, EpisodeStore(context), {}, {}, {}, {}, {}) }
+        compose.onNodeWithText("Load Balancers", substring = true).assertExists()
+        compose.onAllNodesWithText("Completed")[0].performClick()            // the filter chip (the first match; the session has a tag too)
+        compose.onNodeWithText("Load Balancers", substring = true).assertExists()
+        compose.onNodeWithText("CDN", substring = true).assertDoesNotExist()
+        shot("1_home_completed_filter")
+    }
+
+    @Test fun completedInSessionOptions() {
+        val r = repo(snapshot(configured))
+        show("6_options_progress") { SessionScreen(r, "cdn", false, {}, {}, {}) }
+        compose.onNodeWithContentDescription("Session options").performClick()
+        compose.onNodeWithText("In progress").assertExists()
+        compose.onNodeWithText("Completed").assertExists()
+        shot("6_session_options_progress")
     }
 
     @Test fun options() {

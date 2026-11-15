@@ -22,8 +22,11 @@ data class Session(
     @SerialName("updated_at") val updatedAt: String = "",
     /** Tags you add, to filter and sort the session list. */
     val labels: List<String> = emptyList(),
+    /** When you marked it completed; null while it is in progress. */
+    @SerialName("completed_at") val completedAt: String? = null,
 ) {
     val isTopic get() = type == "topic"
+    val isCompleted get() = completedAt != null
 }
 
 @Serializable

@@ -3,6 +3,17 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.17.0 — 2026-11-15
+
+### Added
+- **Mark sessions as completed.** In a session's options, **Progress** has **In progress** and
+  **Completed**; you can switch back any time. A completed session shows a blue **Completed** tag in the
+  Home list, and Home has a new **Completed** filter chip. It is only a mark: the session stays Active or
+  Inactive as it was, revision and the podcast carry on, and it doesn't move in the list.
+
+### Database
+- Migration `20261115140000_ewe_13_completed.sql`: `completed_at` on sessions (empty = in progress).
+
 ## 0.16.0 — 2026-11-15
 
 ### Added

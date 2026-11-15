@@ -30,6 +30,7 @@ object Labels {
         "Topics" -> s.isTopic
         "Projects" -> !s.isTopic
         "Inactive" -> !s.isActive
+        "Completed" -> s.isCompleted
         else -> true
     }
 

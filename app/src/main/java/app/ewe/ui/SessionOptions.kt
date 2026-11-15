@@ -83,6 +83,16 @@ fun SessionOptions(repo: Repository, snap: Snapshot, session: Session, onDismiss
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Progress", style = ts(14, 600))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusChoice("In progress", !session.isCompleted, C.Ink, C.G100, Modifier.weight(1f)) { if (session.isCompleted) run.go { repo.setCompleted(session.id, false) } }
+                    StatusChoice("Completed", session.isCompleted, C.Blue, C.BlueBg, Modifier.weight(1f)) { if (!session.isCompleted) run.go { repo.setCompleted(session.id, true) } }
+                }
+                Text(if (session.isCompleted) "Marked completed ${longDate(session.completedAt.orEmpty())}. It's only a mark: revision carries on and it stays ${if (session.isActive) "Active" else "Inactive"}."
+                     else "Mark it completed when you've finished studying it. Filter Home by Completed to find it.", style = ts(13, 400, C.G600, 1.45f))
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Labels", style = ts(14, 600))
                 if (session.labels.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     session.labels.forEach { l ->

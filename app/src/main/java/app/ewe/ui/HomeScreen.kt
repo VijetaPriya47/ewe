@@ -99,8 +99,8 @@ fun HomeScreen(repo: Repository, store: EpisodeStore, onOpen: (String) -> Unit, 
             }
         }
 
-        Row(Modifier.padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("All", "Topics", "Projects", "Inactive").forEach { f ->
+        Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("All", "Topics", "Projects", "Inactive", "Completed").forEach { f ->
                 val on = f == filter
                 Box(Modifier.height(32.dp).clip(CircleShape).background(if (on) C.Ink else C.White)
                     .then(if (on) Modifier else Modifier.border(1.dp, C.G200, CircleShape))
@@ -188,6 +188,7 @@ private fun SessionRow(s: Session, notes: Int, onOpen: (String) -> Unit) {
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             TypeTag(s); StatusTag(s)
+            if (s.isCompleted) Tag("Completed", C.BlueBg, C.Blue, 600, 12)
             Spacer(Modifier.width(0.dp))
             Text(plural(notes, "note"), style = ts(12, 400, C.G500))
         }
