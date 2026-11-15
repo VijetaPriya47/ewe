@@ -183,7 +183,7 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
         try {
             flushPendingListened()
             val s = coroutineScope {
-                val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at") }
+                val sessions = async { api.selectAll("sessions", "id,title,type,is_active,recreated_from,created_at,updated_at,labels") }
                 val sections = async { api.selectAll("sections", "id,session_id,title,position,important") }
                 val bullets = async { api.selectAll("bullets", "id,section_id,content,kind,lang,important,highlight,caption,level,position,date_added,origin_session_id,origin_message_id") }
                 val links = async { api.selectAll("bullet_links", "id,bullet_id,section_id,position,created_at") }
@@ -246,6 +246,12 @@ class Repository(private val context: Context, val prefs: LocalPrefs, private va
 
     suspend fun renameSession(id: String, title: String) {
         api.update("sessions", "id=eq.$id", buildJsonObject { put("title", title.trim()) }); refresh()
+    }
+
+    suspend fun setLabels(id: String, labels: List<String>) {
+        val clean = labels.mapNotNull { Labels.clean(it) }.distinctBy { it.lowercase() }.take(Labels.MAX)
+        api.update("sessions", "id=eq.$id", buildJsonObject { put("labels", kotlinx.serialization.json.JsonArray(clean.map { kotlinx.serialization.json.JsonPrimitive(it) })) })
+        refresh()
     }
 
     suspend fun setActive(id: String, active: Boolean) {

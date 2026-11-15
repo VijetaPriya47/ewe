@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -31,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import app.ewe.data.Labels
 import app.ewe.data.Repository
 import app.ewe.data.Session
 import app.ewe.data.Snapshot
@@ -45,6 +49,7 @@ fun SessionOptions(repo: Repository, snap: Snapshot, session: Session, onDismiss
     var renaming by remember { mutableStateOf(false) }
     var recreating by remember { mutableStateOf(false) }
     var restarting by remember { mutableStateOf(false) }
+    var newLabel by remember { mutableStateOf("") }
     val other = if (session.isTopic) "Project" else "Topic"
     val sections = snap.sectionsOf(session.id)
     val sectionIds = sections.map { it.id }.toSet()
@@ -75,6 +80,37 @@ fun SessionOptions(repo: Repository, snap: Snapshot, session: Session, onDismiss
                     StatusChoice("Inactive", !session.isActive, C.Red, C.RedBg, Modifier.weight(1f)) { if (session.isActive) run.go { repo.setActive(session.id, false) } }
                 }
                 Text("Inactive: still readable and searchable, but gets no automatic additions and is left out of the podcast. Sessions can't be deleted.", style = ts(13, 400, C.G600, 1.45f))
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Labels", style = ts(14, 600))
+                if (session.labels.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    session.labels.forEach { l ->
+                        Row(Modifier.clip(CircleShape).background(C.PurpleBg).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(l, style = ts(13, 500, C.Purple))
+                            Box(Modifier.size(32.dp).clip(CircleShape).clickable(role = Role.Button) { run.go { repo.setLabels(session.id, session.labels - l) } }
+                                .semantics { contentDescription = "Remove label $l" }, contentAlignment = Alignment.Center) {
+                                Icon(Ic.Close, null, tint = C.Purple, modifier = Modifier.size(12.dp))
+                            }
+                        }
+                    }
+                }
+                fun addLabel(text: String) { if (Labels.clean(text) != null) { run.go { repo.setLabels(session.id, Labels.add(session.labels, text)) }; newLabel = "" } }
+                if (session.labels.size < Labels.MAX) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.OutlinedTextField(newLabel, { newLabel = it.take(Labels.MAX_LENGTH) }, singleLine = true, textStyle = ts(15),
+                        placeholder = { Text("Add a label", style = ts(15, 400, C.G400)) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { addLabel(newLabel) }))
+                    SmallButton("Add", enabled = Labels.clean(newLabel) != null && !run.busy) { addLabel(newLabel) }
+                }
+                val suggestions = Labels.counts(snap.sessions).map { it.first }.filter { s -> session.labels.none { it.equals(s, ignoreCase = true) } }
+                if (suggestions.isNotEmpty() && session.labels.size < Labels.MAX) androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    suggestions.forEach { s ->
+                        Text("+ $s", style = ts(13, 500, C.G700), modifier = Modifier.clip(CircleShape).border(1.dp, C.G200, CircleShape)
+                            .clickable(role = Role.Button) { addLabel(s) }.padding(horizontal = 12.dp, vertical = 6.dp))
+                    }
+                }
+                Text("Labels help you find sessions: filter and sort the list on Home by them. Up to ${Labels.MAX}.", style = ts(13, 400, C.G600, 1.45f))
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

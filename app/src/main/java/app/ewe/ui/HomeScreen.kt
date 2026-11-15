@@ -2,6 +2,7 @@ package app.ewe.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,8 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.ewe.data.Labels
 import app.ewe.data.Repository
 import app.ewe.data.Session
 import app.ewe.data.SyncState
@@ -48,16 +52,14 @@ fun HomeScreen(repo: Repository, store: EpisodeStore, onOpen: (String) -> Unit, 
     var filter by rememberSaveable { mutableStateOf("All") }
     val today = repo.today()
 
-    val sessions = remember(snap, filter) {
-        snap.sessions.filter {
-            when (filter) {
-                "Topics" -> it.isTopic
-                "Projects" -> !it.isTopic
-                "Inactive" -> !it.isActive
-                else -> true
-            }
-        }.sortedByDescending { app.ewe.data.instantOf(it.updatedAt) }
-    }
+    var sortName by rememberSaveable { mutableStateOf(Labels.Sort.UPDATED.name) }
+    var label by rememberSaveable { mutableStateOf<String?>(null) }
+    var sortMenu by remember { mutableStateOf(false) }
+    val sort = Labels.Sort.valueOf(sortName)
+    val labelCounts = remember(snap) { Labels.counts(snap.sessions) }
+    // a label that no session has any more is no longer a filter
+    val activeLabel = label?.takeIf { l -> labelCounts.any { it.first.equals(l, ignoreCase = true) } }
+    val sessions = remember(snap, filter, activeLabel, sort) { Labels.arrange(snap.sessions, filter, activeLabel, sort) }
 
     Column(Modifier.fillMaxSize().background(C.White)) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -108,6 +110,34 @@ fun HomeScreen(repo: Repository, store: EpisodeStore, onOpen: (String) -> Unit, 
             }
         }
 
+        Row(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                Row(Modifier.height(32.dp).clip(CircleShape).border(1.dp, C.G200, CircleShape).clickable(role = androidx.compose.ui.semantics.Role.Button) { sortMenu = true }
+                    .padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Sort: ${sort.label}", style = ts(13, 500, C.G700))
+                    Text("▾", style = ts(11, 500, C.G500))
+                }
+                androidx.compose.material3.DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }, containerColor = C.White) {
+                    Labels.Sort.entries.forEach { o ->
+                        androidx.compose.material3.DropdownMenuItem(text = { Text(o.label, style = ts(15, if (o == sort) 600 else 400)) },
+                            onClick = { sortName = o.name; sortMenu = false })
+                    }
+                }
+            }
+            if (labelCounts.isNotEmpty()) Row(Modifier.weight(1f).horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                labelCounts.forEach { (l, n) ->
+                    val on = activeLabel.equals(l, ignoreCase = true)
+                    Row(Modifier.height(32.dp).clip(CircleShape).background(if (on) C.Purple else C.PurpleBg)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button) { label = if (on) null else l }
+                        .semantics { contentDescription = "Filter by label $l" }.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(l, style = ts(13, 500, if (on) C.White else C.Purple))
+                        Text("$n", style = ts(12, 400, if (on) C.White.copy(alpha = 0.8f) else C.Purple.copy(alpha = 0.7f)))
+                    }
+                }
+            }
+        }
+
         (sync as? SyncState.Failed)?.let {
             Text("Showing your saved copy · ${it.message}", style = ts(12, 500, C.Amber), maxLines = 2,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(10.dp))
@@ -129,7 +159,17 @@ fun HomeScreen(repo: Repository, store: EpisodeStore, onOpen: (String) -> Unit, 
             }
         } else {
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                items(sessions, key = { it.id }) { s -> SessionRow(s, snap.noteCount(s.id), onOpen) }
+                var last: String? = null
+                sessions.forEach { s ->
+                    if (sort == Labels.Sort.LABEL) {
+                        val g = Labels.group(s)?.lowercase() ?: ""
+                        if (g != last) {
+                            last = g
+                            item(key = "group-$g") { Text(Labels.group(s) ?: "No label", style = ts(12, 600, C.G600), modifier = Modifier.padding(start = 12.dp, top = 10.dp, bottom = 2.dp)) }
+                        }
+                    }
+                    item(key = s.id) { SessionRow(s, snap.noteCount(s.id), onOpen) }
+                }
             }
         }
 
@@ -150,6 +190,11 @@ private fun SessionRow(s: Session, notes: Int, onOpen: (String) -> Unit) {
             TypeTag(s); StatusTag(s)
             Spacer(Modifier.width(0.dp))
             Text(plural(notes, "note"), style = ts(12, 400, C.G500))
+        }
+        if (s.labels.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            s.labels.take(3).forEach { Text(it, style = ts(11, 500, C.Purple), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(C.PurpleBg).padding(horizontal = 6.dp, vertical = 2.dp)) }
+            if (s.labels.size > 3) Text("+${s.labels.size - 3}", style = ts(11, 500, C.G500), modifier = Modifier.padding(vertical = 2.dp))
         }
     }
 }

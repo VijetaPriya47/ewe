@@ -217,6 +217,14 @@ begin
                      and (select string_agg(b.content, ',' order by b.position) from bullets b join sections s on s.id = b.section_id
                            where s.session_id = v_sud and s.title = 'Nested') like 'Parent,placed,Child%', 'into_existing places inside the section');
 
+  -- labels
+  update sessions set labels = array['exam', 'week 3'] where id = v_cdn;
+  perform pg_temp.ok((select labels = array['exam', 'week 3'] from sessions where id = v_cdn), 'labels saved');
+  perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L] where id = %L', '', v_cdn)), 'empty label refused');
+  perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L] where id = %L', repeat('x', 25), v_cdn)), 'long label refused');
+  perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L] where id = %L', ' padded', v_cdn)), 'no padding');
+  perform pg_temp.ok(pg_temp.fails(format('update sessions set labels = array[%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L] where id = %L', 'a','b','c','d','e','f','g','h','i','j','k', v_cdn)), 'at most 10 labels');
+
   -- recreate as project
   v_new := recreate_session(v_cdn);
   perform pg_temp.ok((select type = 'project' and recreated_from = v_cdn from sessions where id = v_new), 'recreated as project');
@@ -229,6 +237,7 @@ begin
                        where s.session_id = v_new and b.content like '%[[ref:' || (select id from session_references where session_id = v_new and number = 1) || ']]%') = 1,
                      'copied note cites the copied reference');
   perform pg_temp.ok((select count(*) from session_summaries where session_id = v_new) = 1, 'summaries copied');
+  perform pg_temp.ok((select labels = array['exam', 'week 3'] from sessions where id = v_new), 'labels copied');
   perform pg_temp.ok((select count(*) from bullets b join sections s on s.id = b.section_id where s.session_id = v_new and b.level = 1) = 1, 'levels copied');
 
   perform pg_temp.ok((select count(*) from search_notes('edge')) >= 1, 'keyword search');

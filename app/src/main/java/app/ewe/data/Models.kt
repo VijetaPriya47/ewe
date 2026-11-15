@@ -20,6 +20,8 @@ data class Session(
     @SerialName("recreated_from") val recreatedFrom: String? = null,
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = "",
+    /** Tags you add, to filter and sort the session list. */
+    val labels: List<String> = emptyList(),
 ) {
     val isTopic get() = type == "topic"
 }

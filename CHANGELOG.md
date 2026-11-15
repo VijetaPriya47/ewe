@@ -3,6 +3,24 @@
 Every release of ewe is listed here, newest first. Install a release from the repository's
 **Releases** page; each build installs over the previous one.
 
+## 0.16.0 — 2026-11-15
+
+### Added
+- **Labels on sessions.** Open a session's options and add labels (up to 10, each up to 24
+  characters): type one, or tap a suggestion from labels you already use. They show as small tags on
+  the session in the Home list, and are kept when you recreate a session as a Topic or Project.
+  Changing labels does not move the session in the list.
+- **Filter by label** on Home: your labels appear as chips (with how many sessions have each) beside the
+  sort button; tap one to see only those sessions, tap it again to clear. It combines with All / Topics /
+  Projects / Inactive.
+- **Sort** on Home: **Latest updated** (the default, as before), **Label** (grouped under each session's
+  first label A–Z, unlabelled last, latest updated first inside each group), **Title A–Z**, or
+  **Newest created**.
+
+### Database
+- Migration `20261115120000_ewe_12_labels.sql`: `labels` on sessions (at most 10, each 1–24 characters,
+  no spaces at either end); `recreate_session` copies them.
+
 ## 0.15.0 — 2026-11-15
 
 ### Added

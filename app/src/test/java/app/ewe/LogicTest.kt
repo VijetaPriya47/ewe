@@ -585,4 +585,32 @@ class LogicTest {
         assertEquals(listOf("vach_aB1_c-d", "vach_Z9y8"), app.ewe.ai.GnaniTts.parseKeys(table))
         server.shutdown()
     }
+
+    @Test fun sessionLabelsAndSorting() {
+        val L = app.ewe.data.Labels
+        fun s(id: String, title: String, updated: String, created: String = "2026-01-01T00:00:00+00:00", labels: List<String> = emptyList(), active: Boolean = true, type: String = "topic") =
+            Session(id, title, type, active, null, created, updated, labels)
+        val all = listOf(
+            s("a", "Alpha", "2026-03-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", listOf("Exam", "week 3")),
+            s("b", "beta", "2026-05-01T00:00:00+00:00", "2026-01-03T00:00:00+00:00"),
+            s("c", "Charlie", "2026-04-01T00:00:00+00:00", "2026-01-04T00:00:00+00:00", listOf("exam"), type = "project"),
+            s("d", "Delta", "2026-02-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00", listOf("Admin"), active = false),
+        )
+        fun ids(sort: app.ewe.data.Labels.Sort, filter: String = "All", label: String? = null) = L.arrange(all, filter, label, sort).map { it.id }
+        assertEquals(listOf("b", "c", "a", "d"), ids(app.ewe.data.Labels.Sort.UPDATED))                 // the default: latest updated first
+        assertEquals(listOf("a", "c", "b", "d"), ids(app.ewe.data.Labels.Sort.CREATED))
+        assertEquals(listOf("a", "b", "c", "d"), ids(app.ewe.data.Labels.Sort.TITLE))
+        assertEquals(listOf("d", "c", "a", "b"), ids(app.ewe.data.Labels.Sort.LABEL))                   // Admin, then exam (c newer than a), then no label
+        assertEquals(listOf("c", "a"), ids(app.ewe.data.Labels.Sort.UPDATED, label = "EXAM"))           // capitals don't matter
+        assertEquals(listOf("c"), ids(app.ewe.data.Labels.Sort.UPDATED, "Projects", "exam"))
+        assertEquals(listOf("d"), ids(app.ewe.data.Labels.Sort.UPDATED, "Inactive"))
+        assertEquals(listOf("Admin" to 1, "Exam" to 2, "week 3" to 1), L.counts(all))
+        // cleaning labels
+        assertEquals("exam week", L.clean("  exam    week "))
+        assertEquals(null, L.clean("   "))
+        assertEquals(24, L.clean("x".repeat(40))!!.length)
+        assertEquals(listOf("Exam"), L.add(listOf("Exam"), " exam "))                 // no duplicates
+        assertEquals(listOf("Exam", "new"), L.add(listOf("Exam"), "new"))
+        assertEquals(10, L.add((1..10).map { "l$it" }, "eleventh").size)             // at most 10
+    }
 }
